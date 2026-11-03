@@ -199,13 +199,14 @@ final class SendQueryTests: XCTestCase {
             INSERT INTO NTChatContext VALUES (7);
             INSERT INTO NTChatRoom VALUES (42,4,99,'',0), (43,1,0,'',0),
                 (44,0,0,NULL,11), (45,0,0,'',12), (46,0,0,'',13), (47,1,99,'지정이름',0),
-                (48,5,0,'지정이름',8);
+                (48,5,0,'지정이름',8), (49,0,0,'',14);
             INSERT INTO NTOpenLink VALUES (99,'https://open.kakao.com/o/AbCdEf12','모집방');
             INSERT INTO NTChatMeta VALUES (43,3,'동명'), (47,3,'다른이름');
             INSERT INTO NTUser VALUES (11,0,'동명','다른이름','별명'),
                 (11,99,'오픈닉네임',NULL,NULL), (12,0,NULL,'화면이름','별명'),
                 (13,0,NULL,NULL,'별명'), (7,99,NULL,'오픈이름','오픈닉네임'),
-                (8,0,NULL,'다른이름','다른별명'), (7,0,'친구이름','화면이름','별명');
+                (8,0,NULL,'다른이름','다른별명'), (7,0,'친구이름','화면이름','별명'),
+                (14,0,'','','판매자닉');
             INSERT INTO NTChatMessage VALUES (90,42,1,7,'old'), (100,42,1,7,'start'),
                 (101,42,1,7,'new'), (102,43,1,7,'other room'),
                 (9223372036854775807,42,99,7,'pending');
@@ -243,6 +244,13 @@ final class SendQueryTests: XCTestCase {
             XCTAssertEqual(try reader.room(chatId: Fixture.namedChatId)?.displayName, Fixture.explicitName)
             XCTAssertEqual(try reader.sameNameCount(displayName: Fixture.duplicateName), Fixture.duplicateCount)
             XCTAssertNil(try reader.room(chatId: Fixture.missingChatId))
+        }
+    }
+
+    func testEmptyStringNamesFallThroughToNickname() throws {
+        try withDatabase { reader, _ in
+            XCTAssertEqual(try reader.room(chatId: 49)?.displayName, "판매자닉")
+            XCTAssertEqual(try reader.sameNameCount(displayName: "판매자닉"), 1)
         }
     }
 

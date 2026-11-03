@@ -50,6 +50,10 @@ public enum AXHelpers {
         AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success
     }
 
+    static func setScrollValue(_ element: AXUIElement, _ value: Double) -> Bool {
+        AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, NSNumber(value: value)) == .success
+    }
+
     public static func performAction(_ element: AXUIElement, _ action: String) -> Bool {
         AXUIElementPerformAction(element, action as CFString) == .success
     }

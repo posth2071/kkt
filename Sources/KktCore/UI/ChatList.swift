@@ -35,6 +35,24 @@ extension AXHelpers {
             ?? tables.max { chatListRows($0).count < chatListRows($1).count }
     }
 
+    static func chatListScrollBar(_ table: AXUIElement) -> AXUIElement? {
+        var parent: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(table, kAXParentAttribute as CFString, &parent) == .success,
+              let parent, CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+        let area = parent as! AXUIElement
+        guard role(area) == KktConstants.AX.scrollArea else { return nil }
+        return children(area).first {
+            role($0) == KktConstants.AX.scrollBar
+                && attribute($0, kAXOrientationAttribute as String) == KktConstants.AX.verticalOrientation
+        }
+    }
+
+    static func chatRowIndex(_ row: AXUIElement) -> Int? {
+        var index: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(row, kAXIndexAttribute as CFString, &index) == .success else { return nil }
+        return (index as? NSNumber)?.intValue
+    }
+
     static func matchingChatRows(_ table: AXUIElement, name: String, selfChat: Bool) -> [AXUIElement] {
         chatListRows(table).filter { row in
             guard role(row) == KktConstants.AX.row else { return false }

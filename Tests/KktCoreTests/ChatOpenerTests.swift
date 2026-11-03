@@ -226,6 +226,66 @@ final class ChatOpenerTests: XCTestCase {
         XCTAssertEqual(query, KktConstants.emptyText)
     }
 
+    func testScansScrolledSearchResultsForExactName() throws {
+        for usesIndex in [true, false] {
+            let effects = ScrolledOpeningEffects()
+            effects.usesIndex = usesIndex
+            let result = try ChatOpener(dependencies: effects.dependencies()).open(.direct(name: ScrollFixture.name))
+            XCTAssertTrue(CFEqual(result, effects.opening.chat))
+            XCTAssertEqual(effects.selectedIndices, [ScrollFixture.matchIndex])
+            XCTAssertEqual(effects.scanValues, ScrollFixture.scanValues + [ScrollFixture.matchStep, .zero])
+            XCTAssertEqual(effects.scrollSleeps, Array(repeating: ScrollFixture.settle,
+                                                      count: effects.scanValues.count))
+            XCTAssertTrue(effects.focusPreservedDuringScan)
+            XCTAssertEqual(effects.query, ScrollFixture.original)
+        }
+    }
+
+    func testScrolledScanRejectsTwoExactMatches() {
+        let effects = ScrolledOpeningEffects()
+        effects.matchIndices.insert(ScrollFixture.secondMatchIndex)
+        XCTAssertThrowsError(try ChatOpener(dependencies: effects.dependencies()).open(.direct(name: ScrollFixture.name))) {
+            XCTAssertEqual($0 as? KktError, .ambiguous(ScrollFixture.name))
+        }
+        XCTAssertTrue(effects.selectedIndices.isEmpty)
+        XCTAssertFalse(effects.opening.opened)
+        XCTAssertEqual(effects.scanValues, ScrollFixture.scanValues + [.zero])
+    }
+
+    func testSelfChatFoundBelowFold() throws {
+        let effects = ScrolledOpeningEffects()
+        effects.selfChat = true
+        let result = try ChatOpener(dependencies: effects.dependencies()).open(.selfChat(name: ScrollFixture.name))
+        XCTAssertTrue(CFEqual(result, effects.opening.chat))
+        XCTAssertEqual(effects.selectedIndices, [ScrollFixture.matchIndex])
+        XCTAssertEqual(effects.scanValues, ScrollFixture.scanValues + [ScrollFixture.matchStep, .zero])
+    }
+
+    func testScrollbarRestored() throws {
+        for outcome in ScrollFixture.Outcome.allCases {
+            let effects = ScrolledOpeningEffects()
+            switch outcome {
+            case .success: break
+            case .notFound: effects.matchIndices = []
+            case .ambiguous: effects.matchIndices.insert(ScrollFixture.secondMatchIndex)
+            case .selectionFailure: effects.selectionSucceeds = false
+            }
+            let opener = ChatOpener(dependencies: effects.dependencies())
+            if outcome == .success {
+                _ = try opener.open(.direct(name: ScrollFixture.name))
+            } else {
+                XCTAssertThrowsError(try opener.open(.direct(name: ScrollFixture.name))) {
+                    let expected: KktError = outcome == .ambiguous
+                        ? .ambiguous(ScrollFixture.name) : .notFound(ScrollFixture.name)
+                    XCTAssertEqual($0 as? KktError, expected)
+                }
+            }
+            XCTAssertEqual(effects.scanValues.last, .zero)
+            XCTAssertEqual(effects.scrollValueWhenRestoring, .zero)
+            XCTAssertEqual(effects.query, ScrollFixture.original)
+        }
+    }
+
     func testOpenRejectsUserWindowAfterMainWindowRecovery() {
         let effects = OpeningEffects()
         effects.mainPresent = false
@@ -280,6 +340,103 @@ final class ChatOpenerTests: XCTestCase {
 
     func testOtherTitledWindowIsUnexpected() {
         XCTAssertEqual(ChatOpener.pickOpenedWindow(titles: ["상대가"], expected: "모집방"), .unexpected)
+    }
+
+    private enum ScrollFixture {
+        static let name = "레이"
+        static let original = "이전 검색"
+        static let rowCount = 78
+        static let visibleCount = 12
+        static let matchIndex = 34
+        static let secondMatchIndex = 70
+        static let matchStep = 0.375
+        static let scanValues: [Double] = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1]
+        static let settle = 0.25
+        static let rowPidBase: pid_t = -1000
+        static let scrollBarPid: pid_t = -6
+        enum Outcome: CaseIterable { case success, notFound, ambiguous, selectionFailure }
+    }
+
+    private final class ScrolledOpeningEffects {
+        let opening = OpeningEffects()
+        let scrollBar = AXUIElementCreateApplication(ScrollFixture.scrollBarPid)
+        var query = ScrollFixture.original
+        var matchIndices: Set<Int> = [ScrollFixture.matchIndex]
+        var usesIndex = true
+        var selfChat = false
+        var selectionSucceeds = true
+        var scrollValue = Double.zero
+        var scanValues: [Double] = []
+        var scrollSleeps: [TimeInterval] = []
+        var selectedIndices: [Int] = []
+        var scrollValueWhenRestoring: Double?
+        var focusPreservedDuringScan = true
+        var generation = Int.zero
+        var currentRows: [AXUIElement] = []
+
+        var visibleIndices: Range<Int> {
+            let start = Int((scrollValue * Double(ScrollFixture.rowCount - ScrollFixture.visibleCount)).rounded())
+            return start..<(start + ScrollFixture.visibleCount)
+        }
+
+        func renderRows() {
+            generation += KktConstants.one
+            currentRows = (KktConstants.zero..<ScrollFixture.rowCount).map {
+                AXUIElementCreateApplication(ScrollFixture.rowPidBase - pid_t(generation * ScrollFixture.rowCount + $0))
+            }
+        }
+
+        func dependencies() -> ChatOpener.Dependencies {
+            renderRows()
+            var dependencies = opening.dependencies()
+            dependencies.title = { element in
+                CFEqual(element, self.opening.main) ? KktConstants.mainWindowIdentifier : ScrollFixture.name
+            }
+            dependencies.search = { _, _ in
+                ChatSearch(findField: { self.opening.table }, pressSearch: { true },
+                    read: { _ in self.query }, clear: { _ in self.query = KktConstants.emptyText; return true },
+                    type: { _, text in
+                        if text == ScrollFixture.original { self.scrollValueWhenRestoring = self.scrollValue }
+                        self.query = text
+                    }, sleep: { _ in })
+            }
+            dependencies.rows = { _ in self.currentRows }
+            dependencies.visibleRows = { _ in self.visibleIndices.map { self.currentRows[$0] } }
+            dependencies.rowIndex = { row in
+                self.usesIndex ? self.currentRows.firstIndex(where: { CFEqual($0, row) }) : nil
+            }
+            dependencies.matchingRows = { _, name, selfChat in
+                XCTAssertEqual(name, ScrollFixture.name)
+                XCTAssertEqual(selfChat, self.selfChat)
+                guard self.query == ScrollFixture.name else { return [] }
+                return self.visibleIndices.filter { self.matchIndices.contains($0) }.map { self.currentRows[$0] }
+            }
+            dependencies.scrollBar = { _ in self.scrollBar }
+            dependencies.setScrollValue = { element, value in
+                XCTAssertTrue(CFEqual(element, self.scrollBar))
+                if value != .zero {
+                    self.focusPreservedDuringScan = self.focusPreservedDuringScan && self.opening.events.isEmpty
+                }
+                self.scrollValue = value
+                self.scanValues.append(value)
+                self.renderRows()
+                return true
+            }
+            dependencies.selectRow = { row, _ in
+                guard let index = self.currentRows.firstIndex(where: { CFEqual($0, row) }),
+                      self.visibleIndices.contains(index) else {
+                    XCTFail("Selection must use a freshly rendered visible row")
+                    return false
+                }
+                self.selectedIndices.append(index)
+                return self.selectionSucceeds
+            }
+            dependencies.sleep = { interval in
+                if interval == ScrollFixture.settle { self.scrollSleeps.append(interval) }
+                self.opening.now.addTimeInterval(interval)
+            }
+            return dependencies
+        }
     }
 
     private final class OpeningEffects {

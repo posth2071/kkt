@@ -115,11 +115,12 @@ public enum KktConstants {
     static let errorCountIncrement = 1
     static let serveEventsQuery = """
         SELECT m.logId, m.chatId,
-               COALESCE(NULLIF(r.chatName, ''), meta3.groupNickname, ol.linkName,
-                        du.friendNickName, du.displayName, du.nickName),
+               COALESCE(NULLIF(r.chatName, ''), NULLIF(meta3.groupNickname, ''), NULLIF(ol.linkName, ''),
+                        NULLIF(du.friendNickName, ''), NULLIF(du.displayName, ''), NULLIF(du.nickName, '')),
                r.type, COALESCE(r.linkId, 0), m.authorId,
-               COALESCE(a.friendNickName, a.displayName, a.nickName,
-                        fallback.friendNickName, fallback.displayName, fallback.nickName),
+               COALESCE(NULLIF(a.friendNickName, ''), NULLIF(a.displayName, ''), NULLIF(a.nickName, ''),
+                        NULLIF(fallback.friendNickName, ''), NULLIF(fallback.displayName, ''),
+                        NULLIF(fallback.nickName, '')),
                m.type, m.message, m.attachment, m.sentAt
         FROM NTChatMessage m
         LEFT JOIN NTChatRoom r ON r.chatId = m.chatId
@@ -166,6 +167,7 @@ public enum KktConstants {
     static let searchClearTimeout = 2.0
     static let searchClearPoll = 0.2
     static let searchFilterTimeout = 3.0
+    static let chatListScrollSettle = 0.25
     static let restoreOpenPath = "/usr/bin/open"
     static let restoreBundleArgument = "-b"
     static let mainWindowBackgroundArgument = "-g"
@@ -215,7 +217,10 @@ public enum KktConstants {
     static let uploadCancelWarning = "채팅방을 닫으시겠습니까"
     static let uploadCancelButton = "취소"
     static let roomDisplayNameExpression =
-        "COALESCE(NULLIF(r.chatName,''), meta3.groupNickname, ol.linkName, du.friendNickName, du.displayName, du.nickName)"
+        // KakaoTalk stores unset friend nicknames as '' (not NULL); without NULLIF a 1:1 room's name became ''
+        // and every send to it failed as ambiguous_name (2026-11-03).
+        "COALESCE(NULLIF(r.chatName,''), NULLIF(meta3.groupNickname,''), NULLIF(ol.linkName,''), "
+            + "NULLIF(du.friendNickName,''), NULLIF(du.displayName,''), NULLIF(du.nickName,''))"
     static let roomJoins = """
         FROM NTChatRoom r
         LEFT JOIN NTOpenLink ol ON ol.linkId=r.linkId AND r.linkId!=0
@@ -223,7 +228,7 @@ public enum KktConstants {
         LEFT JOIN NTUser du ON du.userId=r.directChatMemberUserId AND du.linkId=0
         """
     static let selfRoomDisplayNameExpression = """
-        (SELECT COALESCE(nickName, displayName) FROM NTUser
+        (SELECT COALESCE(NULLIF(nickName,''), NULLIF(displayName,'')) FROM NTUser
          WHERE userId = (\(serveUserIdQuery)) AND linkId = \(noLinkId))
         """
     static let roomQuery = "SELECT r.chatId, r.type, r.linkId, ol.linkUrl, "
@@ -356,6 +361,8 @@ public enum KktConstants {
         static let button = "AXButton"
         static let checkBox = "AXCheckBox"
         static let scrollArea = "AXScrollArea"
+        static let scrollBar = "AXScrollBar"
+        static let verticalOrientation = "AXVerticalOrientation"
         static let table = "AXTable"
         static let row = "AXRow"
         static let image = "AXImage"

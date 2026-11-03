@@ -31,6 +31,11 @@ public final class ChatOpener {
         var search: (AXUIElement, pid_t) -> ChatSearch? = { ChatSearch(mainWindow: $0, pid: $1) }
         var table: (AXUIElement) -> AXUIElement? = AXHelpers.chatListTable
         var matchingRows: (AXUIElement, String, Bool) -> [AXUIElement] = AXHelpers.matchingChatRows
+        var rows: (AXUIElement) -> [AXUIElement] = AXHelpers.children
+        var visibleRows: (AXUIElement) -> [AXUIElement] = AXHelpers.chatListRows
+        var rowIndex: (AXUIElement) -> Int? = AXHelpers.chatRowIndex
+        var scrollBar: (AXUIElement) -> AXUIElement? = AXHelpers.chatListScrollBar
+        var setScrollValue: (AXUIElement, Double) -> Bool = AXHelpers.setScrollValue
         var selectRow: (AXUIElement, AXUIElement) -> Bool = { AXHelpers.selectRow($0, in: $1) }
         var focus: (AXUIElement) -> Bool = AXHelpers.focus
         var pressReturn: (pid_t) -> Void = BackgroundInput.pressReturn
@@ -145,13 +150,22 @@ public final class ChatOpener {
             dependencies.sleep(KktConstants.actionSettle)
         }
         var search: ChatSearch?
-        defer { search?.restore() }
+        var scannedScrollBar: AXUIElement?
+        defer {
+            if search != nil,
+               let scrollBar = scannedScrollBar ?? dependencies.table(mainWindow).flatMap(dependencies.scrollBar) {
+                _ = dependencies.setScrollValue(scrollBar, Double(KktConstants.zero))
+                dependencies.sleep(KktConstants.chatListScrollSettle)
+            }
+            search?.restore()
+        }
         let match: (table: AXUIElement, row: AXUIElement)?
         if let visibleMatch = matchingChatRow(in: mainWindow, name: name, selfChat: selfChat) {
             match = visibleMatch
         } else {
             search = dependencies.search(mainWindow, pid)
-            match = findChatRow(in: mainWindow, search: search, name: name, selfChat: selfChat)
+            match = try findChatRow(in: mainWindow, search: search, name: name,
+                                    selfChat: selfChat, scannedScrollBar: &scannedScrollBar)
         }
         guard let (table, row) = match else {
             throw KktError.notFound(name)
@@ -182,14 +196,51 @@ public final class ChatOpener {
     }
 
     private func findChatRow(in mainWindow: AXUIElement, search: ChatSearch?, name: String,
-                             selfChat: Bool) -> (table: AXUIElement, row: AXUIElement)? {
+                             selfChat: Bool, scannedScrollBar: inout AXUIElement?) throws
+        -> (table: AXUIElement, row: AXUIElement)? {
         guard let search, search.clear() else { return nil }
         if let match = awaitRow(in: mainWindow, name: name, selfChat: selfChat, timeout: KktConstants.searchClearTimeout) {
             return match
         }
         guard !name.isEmpty else { return nil }
         search.type(name)
-        return awaitRow(in: mainWindow, name: name, selfChat: selfChat, timeout: KktConstants.searchFilterTimeout)
+        if let match = awaitRow(in: mainWindow, name: name, selfChat: selfChat, timeout: KktConstants.searchFilterTimeout) {
+            return match
+        }
+        return try scanChatRows(in: mainWindow, name: name, selfChat: selfChat, scannedScrollBar: &scannedScrollBar)
+    }
+
+    private func scanChatRows(in mainWindow: AXUIElement, name: String, selfChat: Bool,
+                              scannedScrollBar: inout AXUIElement?) throws
+        -> (table: AXUIElement, row: AXUIElement)? {
+        guard let table = dependencies.table(mainWindow), let scrollBar = dependencies.scrollBar(table) else { return nil }
+        scannedScrollBar = scrollBar
+        let rowCount = dependencies.rows(table).count
+        let visibleCount = max(KktConstants.one, dependencies.visibleRows(table).count)
+        let steps = max(KktConstants.one, Int(ceil(Double(rowCount) / Double(visibleCount)))) + KktConstants.one
+        var matches: [Int: Double] = [:]
+        for step in KktConstants.zero...steps {
+            let value = Double(step) / Double(steps)
+            guard dependencies.setScrollValue(scrollBar, value) else { return nil }
+            dependencies.sleep(KktConstants.chatListScrollSettle)
+            guard let currentTable = dependencies.table(mainWindow) else { return nil }
+            let rows = dependencies.rows(currentTable)
+            for row in dependencies.matchingRows(currentTable, name, selfChat) {
+                guard let index = dependencies.rowIndex(row) ?? rows.firstIndex(where: { CFEqual($0, row) }) else {
+                    return nil
+                }
+                if matches[index] == nil { matches[index] = value }
+            }
+        }
+        guard matches.count <= KktConstants.uniqueMatchCount else { throw KktError.ambiguous(name) }
+        guard let match = matches.first, dependencies.setScrollValue(scrollBar, match.value) else { return nil }
+        dependencies.sleep(KktConstants.chatListScrollSettle)
+        guard let currentTable = dependencies.table(mainWindow) else { return nil }
+        let rows = dependencies.rows(currentTable)
+        let candidates = dependencies.matchingRows(currentTable, name, selfChat).filter { row in
+            (dependencies.rowIndex(row) ?? rows.firstIndex(where: { CFEqual($0, row) })) == match.key
+        }
+        return Self.uniqueMatch(candidates).map { (currentTable, $0) }
     }
 
     private func awaitRow(in mainWindow: AXUIElement, name: String, selfChat: Bool,
