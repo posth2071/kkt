@@ -58,11 +58,15 @@ public final class SendOperation {
         var currentMaxLogId: () throws -> Int64 = { KktConstants.noLogId }
         var myUserId: () throws -> Int64 = { KktConstants.noLogId }
         var open: (SendTarget) throws -> AXUIElement = { try ChatOpener().open($0) }
+        var openViaCard: (CardRoute) throws -> AXUIElement = { _ in throw KktError.automation(KktConstants.automationCode) }
+        var directChatId: (Int64) throws -> Int64? = { _ in nil }
+        var recentTexts: (Int64, Int) throws -> [String] = { _, _ in [] }
         var close: (AXUIElement) -> Void = { _ = AXHelpers.closeWindow($0) }
         var isWindowOpen: (AXUIElement) -> Bool = { AXHelpers.role($0) == kAXWindowRole as String }
         var children: (AXUIElement) -> [AXUIElement] = AXHelpers.children
         var role: (AXUIElement) -> String? = AXHelpers.role
         var title: (AXUIElement) -> String? = AXHelpers.title
+        var identifier: (AXUIElement) -> String? = AXHelpers.identifier
         var value: (AXUIElement) -> String? = AXHelpers.value
         var press: (AXUIElement) -> Bool = { AXHelpers.performAction($0, kAXPressAction as String) }
         var sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
@@ -80,6 +84,17 @@ public final class SendOperation {
         var dependencies = Dependencies()
         dependencies.room = reader.room
         dependencies.sameNameCount = reader.sameNameCount
+        dependencies.directChatId = reader.directChatId
+        dependencies.recentTexts = reader.recentTexts
+        dependencies.openViaCard = { route in
+            let ui = ContactAXUI(room: {
+                guard let room = try reader.room(chatId: route.roomChatId) else {
+                    throw KktError.notFound(String(route.roomChatId))
+                }
+                return room
+            }, recognizeWindow: ScreenText.recognize)
+            return try ui.openDirectChat(nickname: route.nickname)
+        }
         dependencies.currentMaxLogId = reader.currentMaxLogId
         dependencies.myUserId = reader.myUserId
         dependencies.wait = { try interval.waitIfNeeded() }
@@ -93,12 +108,11 @@ public final class SendOperation {
         self.init(dependencies: dependencies)
     }
 
-    public func execute(chatId: Int64, text: String, images: [String], dryRun: Bool) throws -> KktResult {
+    public func execute(chatId: Int64, text: String, images: [String], dryRun: Bool,
+                        viaCard: CardRoute? = nil) throws -> KktResult {
         guard let room = try dependencies.room(chatId) else { throw KktError.notFound(String(chatId)) }
         let count = room.needsNameLookup ? try dependencies.sameNameCount(room.displayName) : KktConstants.noMatchingNames
-        let target = try resolveTarget(chatId: chatId, room: room, sameNameCount: count)
-        let start = try dependencies.currentMaxLogId()
-        let window = try dependencies.open(target)
+        let (start, window) = try openWindow(chatId: chatId, room: room, sameNameCount: count, viaCard: viaCard)
         let result: KktResult
         do {
             switch dependencies.inputState(window) {
@@ -126,6 +140,76 @@ public final class SendOperation {
         }
         guard closeSafely(window) else { return KktResult(result: KktConstants.uncertainResult, chatId: chatId) }
         return result
+    }
+
+    private func openWindow(chatId: Int64, room: RoomRow, sameNameCount: Int,
+                            viaCard: CardRoute?) throws -> (Int64, AXUIElement) {
+        let target: SendTarget
+        do {
+            target = try resolveTarget(chatId: chatId, room: room, sameNameCount: sameNameCount)
+        } catch {
+            let route = try fallbackRoute(for: error, chatId: chatId, room: room, viaCard: viaCard)
+            let start = try dependencies.currentMaxLogId()
+            return (start, try openCardWindow(route, chatId: chatId, room: room))
+        }
+        let start = try dependencies.currentMaxLogId()
+        do {
+            return (start, try dependencies.open(target))
+        } catch {
+            let route = try fallbackRoute(for: error, chatId: chatId, room: room, viaCard: viaCard)
+            return (start, try openCardWindow(route, chatId: chatId, room: room))
+        }
+    }
+
+    private func fallbackRoute(for error: Error, chatId: Int64, room: RoomRow,
+                               viaCard: CardRoute?) throws -> CardRoute {
+        switch error {
+        case KktError.ambiguous, KktError.notFound: break
+        default: throw error
+        }
+        guard room.type == KktConstants.directRoomType, let viaCard else { throw error }
+        guard try dependencies.directChatId(viaCard.userId) == chatId else {
+            throw KktError.ambiguous(room.displayName)
+        }
+        return viaCard
+    }
+
+    private func openCardWindow(_ route: CardRoute, chatId: Int64, room: RoomRow) throws -> AXUIElement {
+        let window = try dependencies.openViaCard(route)
+        do {
+            guard dependencies.title(window) == room.displayName else {
+                throw KktError.ambiguous(room.displayName)
+            }
+            let texts = try dependencies.recentTexts(chatId, KktConstants.cardIdentityTextLimit)
+            if !texts.isEmpty {
+                let candidates = texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter {
+                    $0.count >= KktConstants.cardIdentityMinimumTextLength
+                }
+                guard let table = messageTable(in: window, depth: KktConstants.AX.searchDepth) else {
+                    throw KktError.ambiguous(room.displayName)
+                }
+                let visibleTexts = descendants(of: table, depth: KktConstants.AX.searchDepth)
+                    .filter { dependencies.role($0).map(KktConstants.messageTextRoles.contains) == true }
+                    .compactMap(dependencies.value)
+                guard candidates.contains(where: { visibleTexts.contains($0) }) else {
+                    throw KktError.ambiguous(room.displayName)
+                }
+            }
+        } catch {
+            dependencies.close(window)
+            throw error
+        }
+        return window
+    }
+
+    private func messageTable(in element: AXUIElement, depth: Int) -> AXUIElement? {
+        if dependencies.role(element) == kAXTableRole as String {
+            return dependencies.identifier(element) == KktConstants.DoctorAX.messageTable ? element : nil
+        }
+        guard depth > KktConstants.zero else { return nil }
+        return dependencies.children(element).lazy.compactMap {
+            self.messageTable(in: $0, depth: depth - KktConstants.one)
+        }.first
     }
 
     private enum SheetOutcome {

@@ -38,11 +38,7 @@ public final class ContactFlow {
                 throw KktError.invalidNickname
             }
             defer { ui.closeAll() }
-            try ui.openRoom()
-            let boxes = try findCard(nickname: nickname)
-            guard let button = locateCardButtons(boxes: boxes, nickname: nickname) else {
-                throw KktError.automation(KktConstants.cardNotVisibleCode)
-            }
+            let (button, boxes) = try prepareCard(nickname: nickname)
             if dryRun {
                 return KktResult(result: KktConstants.dryRunResult,
                                  reason: KktConstants.cardFoundPrefix + button.label)
@@ -61,6 +57,27 @@ public final class ContactFlow {
     public static func failureReason(_ error: Error) -> String {
         if case KktError.automation(let reason) = error { return reason }
         return (error as? KktError)?.code ?? KktConstants.automationCode
+    }
+
+    func openChat(nickname: String, waitWindow: () -> AXUIElement?) throws -> AXUIElement {
+        guard !nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw KktError.invalidNickname
+        }
+        let (button, boxes) = try prepareCard(nickname: nickname)
+        _ = try clickCard(button, boxes: boxes)
+        guard let window = waitWindow() else {
+            throw KktError.automation(KktConstants.contactWindowMissingCode)
+        }
+        return window
+    }
+
+    private func prepareCard(nickname: String) throws -> ((primary: CGPoint, label: String), [TextBox]) {
+        try ui.openRoom()
+        let boxes = try findCard(nickname: nickname)
+        guard let button = locateCardButtons(boxes: boxes, nickname: nickname) else {
+            throw KktError.automation(KktConstants.cardNotVisibleCode)
+        }
+        return (button, boxes)
     }
 
     private func findCard(nickname: String) throws -> [TextBox] {
@@ -136,6 +153,28 @@ public final class ContactAXUI: ContactUI {
         var identifier: (AXUIElement) -> String? = AXHelpers.identifier
         var title: (AXUIElement) -> String? = AXHelpers.title
         var closeWindow: (AXUIElement) -> Bool = AXHelpers.closeWindow
+        var frontmostBundleId: () -> String? = KakaoApp.frontmostBundleId
+        var captureFocus: () -> (() -> Void) = {
+            let guard_ = FocusGuard(restoresCursor: true)
+            return { guard_.restore() }
+        }
+        var activateWindow: (AXUIElement) throws -> Void = { window in
+            guard let application = NSRunningApplication.runningApplications(withBundleIdentifier: KakaoApp.bundleId).first,
+                  application.activate(), AXHelpers.performAction(window, kAXRaiseAction as String) else {
+                throw KktError.automation(KktConstants.automationCode)
+            }
+        }
+        var clickPoint: (CGPoint) throws -> Void = { point in
+            guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                                     mouseCursorPosition: point, mouseButton: .left),
+                  let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                                   mouseCursorPosition: point, mouseButton: .left) else {
+                throw KktError.automation(KktConstants.automationCode)
+            }
+            down.post(tap: .cghidEventTap)
+            Thread.sleep(forTimeInterval: KktConstants.contactClickInterval)
+            up.post(tap: .cghidEventTap)
+        }
         var clock: () -> Date = { Date() }
         var sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     }
@@ -147,7 +186,7 @@ public final class ContactAXUI: ContactUI {
     private var app: AXUIElement?
     private var previousWindows: [AXUIElement] = []
     private var roomWindows: [AXUIElement] = []
-    private var focusGuard: FocusGuard?
+    private var restoreFocus: (() -> Void)?
     private var foregroundDeadline: Date?
 
     public convenience init(room: @escaping () throws -> RoomRow,
@@ -189,19 +228,19 @@ public final class ContactAXUI: ContactUI {
 
     // Foreground exception: profile-card controls are absent from KakaoTalk's AX tree.
     public func activate() throws {
-        focusGuard = FocusGuard(restoresCursor: true)
+        try KakaoApp.checkNotInUse(frontmostBundleId: dependencies.frontmostBundleId)
+        restoreFocus = dependencies.captureFocus()
         foregroundDeadline = dependencies.clock().addingTimeInterval(KktConstants.contactForegroundTimeout)
-        guard let roomWindow,
-              let application = NSRunningApplication.runningApplications(withBundleIdentifier: KakaoApp.bundleId).first,
-              application.activate(), AXHelpers.performAction(roomWindow, kAXRaiseAction as String) else {
+        guard let roomWindow else {
             throw KktError.automation(KktConstants.automationCode)
         }
+        try dependencies.activateWindow(roomWindow)
         dependencies.sleep(KktConstants.foregroundSettle)
     }
 
     public func restore() {
-        focusGuard?.restore()
-        focusGuard = nil
+        restoreFocus?()
+        restoreFocus = nil
         foregroundDeadline = nil
     }
 
@@ -211,15 +250,7 @@ public final class ContactAXUI: ContactUI {
             throw KktError.automation(KktConstants.buttonNotFoundCode)
         }
         try validateContactClick(p, label: label, boxes: boxes)
-        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
-                                 mouseCursorPosition: p, mouseButton: .left),
-              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
-                               mouseCursorPosition: p, mouseButton: .left) else {
-            throw KktError.automation(KktConstants.automationCode)
-        }
-        down.post(tap: .cghidEventTap)
-        dependencies.sleep(KktConstants.contactClickInterval)
-        up.post(tap: .cghidEventTap)
+        try dependencies.clickPoint(p)
         dependencies.sleep(KktConstants.actionSettle)
     }
 
@@ -259,21 +290,39 @@ public final class ContactAXUI: ContactUI {
     }
 
     public func waitNewChatWindow(title: String) -> Bool {
-        guard let app else { return false }
+        waitNewChatWindow(matching: { self.dependencies.title($0) == title }) != nil
+    }
+
+    private func waitNewChatWindow(matching matches: (AXUIElement) -> Bool) -> AXUIElement? {
+        guard let app else { return nil }
         let deadline = dependencies.clock().addingTimeInterval(KktConstants.openWindowTimeout)
         repeat {
-            if newWindows(in: app, excluding: roomWindows).contains(where: {
-                AXHelpers.title($0) == title
-            }) { return true }
+            if let window = newWindows(in: app, excluding: roomWindows).first(where: matches) { return window }
             dependencies.sleep(KktConstants.windowPoll)
         } while dependencies.clock() < deadline
-        return false
+        return nil
+    }
+
+    func openDirectChat(nickname: String) throws -> AXUIElement {
+        var directWindow: AXUIElement?
+        defer { closeAll(keeping: directWindow) }
+        let flow = ContactFlow(ui: self, lookupChatId: { _ in nil }, clock: dependencies.clock, sleep: dependencies.sleep)
+        let window = try flow.openChat(nickname: nickname, waitWindow: {
+            self.waitNewChatWindow(matching: { _ in true })
+        })
+        directWindow = window
+        return window
     }
 
     public func closeAll() {
+        closeAll(keeping: nil)
+    }
+
+    private func closeAll(keeping keptWindow: AXUIElement?) {
         defer { restore() }
         if let app {
             for window in newWindows(in: app, excluding: previousWindows).reversed() {
+                if let keptWindow, CFEqual(window, keptWindow) { continue }
                 _ = dependencies.closeWindow(window)
             }
         }

@@ -107,6 +107,142 @@ private final class FakeContactUI: ContactUI {
     func closeAll() { closes += ContactFixture.one }
 }
 final class ContactTests: XCTestCase {
+    private final class CardWindowUI {
+        let main = AXUIElementCreateApplication(pid_t(ContactFixture.one))
+        let room = AXUIElementCreateApplication(pid_t(ContactFixture.two))
+        let direct = AXUIElementCreateApplication(pid_t(ContactFixture.two + ContactFixture.one))
+        let newMain = AXUIElementCreateApplication(pid_t(ContactFixture.two + ContactFixture.two))
+        var windows: [AXUIElement] = []
+        var closed: [AXUIElement] = []
+        var screens = [ContactFixture.existing]
+        var stage = ContactFixture.zero
+        var now = Date(timeIntervalSince1970: ContactFixture.epoch)
+        var restored = false
+        var activated = false
+        var clicked = false
+        var inUse = false
+        var createsWindow = true
+        var createsMainWindow = false
+        var recognitionError: KktError?
+
+        func ui() -> ContactAXUI {
+            windows = [main]
+            var dependencies = ContactAXUI.Dependencies()
+            dependencies.prepareWindows = { (self.main, self.main) }
+            dependencies.windows = { _ in self.windows }
+            dependencies.identifier = {
+                CFEqual($0, self.main) || CFEqual($0, self.newMain) ? KktConstants.mainWindowIdentifier : nil
+            }
+            dependencies.title = { element in
+                CFEqual(element, self.direct) ? ContactFixture.nickname : ContactFixture.existingName
+            }
+            dependencies.openChat = { _ in self.windows.append(self.room); return self.room }
+            dependencies.closeWindow = { window in
+                self.closed.append(window)
+                self.windows.removeAll { CFEqual($0, window) }
+                return true
+            }
+            dependencies.frontmostBundleId = { self.inUse ? KakaoApp.bundleId : nil }
+            dependencies.captureFocus = { { self.restored = true } }
+            dependencies.activateWindow = { _ in self.activated = true }
+            dependencies.clickPoint = { _ in
+                self.clicked = true
+                if self.stage < self.screens.count - ContactFixture.one {
+                    self.stage += ContactFixture.one
+                } else if self.createsWindow {
+                    self.windows.append(self.direct)
+                }
+                if self.createsMainWindow { self.windows.append(self.newMain) }
+            }
+            dependencies.clock = { self.now }
+            dependencies.sleep = { self.now.addTimeInterval($0) }
+            return ContactAXUI(room: {
+                RoomRow(chatId: ContactFixture.chatId, type: ContactFixture.one,
+                    linkId: ContactFixture.userId, linkUrl: ContactFixture.link, displayName: ContactFixture.existingName)
+            }, recognizeWindow: { _ in
+                if let error = self.recognitionError { throw error }
+                return self.screens[self.stage]
+            }, dependencies: dependencies)
+        }
+    }
+
+    func testCardSendKeepsNewWindowWhoseTitleDiffersFromCardNickname() throws {
+        let fixture = CardWindowUI()
+        let window = try fixture.ui().openDirectChat(nickname: ContactFixture.existingName)
+        XCTAssertTrue(CFEqual(window, fixture.direct))
+        XCTAssertEqual(fixture.closed.count, ContactFixture.one)
+        XCTAssertTrue(CFEqual(try XCTUnwrap(fixture.closed.first), fixture.room))
+        XCTAssertTrue(fixture.windows.contains { CFEqual($0, fixture.direct) })
+        XCTAssertTrue(fixture.activated)
+        XCTAssertTrue(fixture.restored)
+    }
+
+    func testCardSendStrangerUsesSharedProfileAddDirectFlow() throws {
+        let fixture = CardWindowUI()
+        fixture.screens = [ContactFixture.stranger, ContactFixture.popover, ContactFixture.added]
+        let window = try fixture.ui().openDirectChat(nickname: ContactFixture.nickname)
+        XCTAssertTrue(CFEqual(window, fixture.direct))
+        XCTAssertEqual(fixture.stage, fixture.screens.count - ContactFixture.one)
+        XCTAssertEqual(fixture.closed.count, ContactFixture.one)
+        XCTAssertTrue(fixture.restored)
+    }
+
+    func testCardSendRequiresNewWindowAndClosesRoomOnTimeout() {
+        let fixture = CardWindowUI()
+        fixture.createsWindow = false
+        XCTAssertThrowsError(try fixture.ui().openDirectChat(nickname: ContactFixture.existingName)) {
+            XCTAssertEqual($0 as? KktError, .automation(KktConstants.contactWindowMissingCode))
+        }
+        XCTAssertEqual(fixture.closed.count, ContactFixture.one)
+        XCTAssertTrue(fixture.restored)
+        XCTAssertFalse(fixture.windows.contains { CFEqual($0, fixture.room) })
+    }
+
+    func testCardSendRefusesActivationWhileKakaoTalkInUse() {
+        let fixture = CardWindowUI()
+        fixture.inUse = true
+        XCTAssertThrowsError(try fixture.ui().openDirectChat(nickname: ContactFixture.existingName)) {
+            XCTAssertEqual($0 as? KktError, .kakaoInUse)
+        }
+        XCTAssertFalse(fixture.activated)
+        XCTAssertFalse(fixture.clicked)
+        XCTAssertEqual(fixture.closed.count, ContactFixture.one)
+    }
+
+    func testCardSendIgnoresNewMainWindows() {
+        let fixture = CardWindowUI()
+        fixture.createsWindow = false
+        fixture.createsMainWindow = true
+        XCTAssertThrowsError(try fixture.ui().openDirectChat(nickname: ContactFixture.existingName)) {
+            XCTAssertEqual($0 as? KktError, .automation(KktConstants.contactWindowMissingCode))
+        }
+        XCTAssertEqual(fixture.closed.count, ContactFixture.one)
+        XCTAssertTrue(fixture.windows.contains { CFEqual($0, fixture.newMain) })
+    }
+
+    func testCardSendCleansUpRoomOnRecognitionFailure() {
+        let fixture = CardWindowUI()
+        fixture.recognitionError = .automation(KktConstants.cardNotVisibleCode)
+        XCTAssertThrowsError(try fixture.ui().openDirectChat(nickname: ContactFixture.existingName)) {
+            XCTAssertEqual($0 as? KktError, fixture.recognitionError)
+        }
+        XCTAssertEqual(fixture.closed.count, ContactFixture.one)
+        XCTAssertFalse(fixture.activated)
+        XCTAssertFalse(fixture.clicked)
+    }
+
+    func testCardSendRestoresBeforeWaitingForWindow() throws {
+        let ui = FakeContactUI()
+        ui.screens = [ContactFixture.existing]
+        let window = AXUIElementCreateApplication(pid_t(ContactFixture.one))
+        let opened = try flow(ui).openChat(nickname: ContactFixture.existingName, waitWindow: {
+            XCTAssertEqual(ui.restorations, ContactFixture.one)
+            return window
+        })
+        XCTAssertTrue(CFEqual(opened, window))
+        XCTAssertEqual(ui.clicks.map(\.1), [ContactFixture.direct])
+    }
+
     func testContactRefusesWhenUserWindowOpen() {
         for nested in [false, true] {
             let main = AXUIElementCreateApplication(pid_t(ContactFixture.one)), chat = AXUIElementCreateApplication(pid_t(ContactFixture.two))

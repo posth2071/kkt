@@ -192,6 +192,18 @@ public enum KktConstants {
     public static let sendTextOption = "text"
     public static let sendImageOption = "image"
     public static let sendDryRunOption = "dry-run"
+    public static let sendViaCardRoomOption = "via-card-room"
+    public static let sendViaCardUserOption = "via-card-user"
+    public static let sendViaCardNicknameOption = "via-card-nickname"
+    static let cardIdentityTextLimit = 20
+    static let cardIdentityMinimumTextLength = 2
+    // Message bubble bodies are AXTextArea in KakaoTalk 26.9; AXStaticText covers system lines (measured 2026-11-03).
+    static let messageTextRoles: Set<String> = [kAXTextAreaRole as String, kAXStaticTextRole as String]
+    static let textMessageType = 1
+    static let recentTextsQuery = """
+        SELECT message FROM NTChatMessage
+        WHERE chatId=? AND type=? AND logId<? ORDER BY logId DESC LIMIT ?
+        """
     public static let sentResult = "sent"
     public static let uncertainResult = "uncertain"
     public static let dryRunResult = "dry_run"

@@ -17,6 +17,20 @@ struct SendCommand: ParsableCommand {
     @Flag(name: .customLong(KktConstants.sendDryRunOption))
     var dryRun = false
 
+    @Option(name: .customLong(KktConstants.sendViaCardRoomOption))
+    var viaCardRoom: Int64?
+
+    @Option(name: .customLong(KktConstants.sendViaCardUserOption))
+    var viaCardUser: Int64?
+
+    @Option(name: .customLong(KktConstants.sendViaCardNicknameOption))
+    var viaCardNickname: String?
+
+    private var cardRoute: CardRoute? {
+        guard let viaCardRoom, let viaCardUser, let viaCardNickname else { return nil }
+        return CardRoute(roomChatId: viaCardRoom, userId: viaCardUser, nickname: viaCardNickname)
+    }
+
     func run() throws {
         do {
             guard KakaoApp.runningPid() != nil else { throw KktError.kakaoNotRunning }
@@ -27,10 +41,12 @@ struct SendCommand: ParsableCommand {
             let reader = try KakaoDatabase.open(config: config)
             defer { reader.close() }
             let operation = SendOperation(reader: reader, interval: SendInterval(path: config.lockPath))
-            KktOutput.emit(try operation.execute(chatId: chatId, text: text, images: images, dryRun: dryRun))
+            KktOutput.emit(try operation.execute(chatId: chatId, text: text, images: images,
+                                                 dryRun: dryRun, viaCard: cardRoute))
         } catch {
             KktOutput.emit(KktResult(result: KktConstants.failedResult,
-                reason: (error as? KktError)?.code ?? KktConstants.automationCode))
+                reason: cardRoute == nil ? (error as? KktError)?.code ?? KktConstants.automationCode
+                    : ContactFlow.failureReason(error)))
             throw ExitCode(KktConstants.failureExitCode)
         }
     }

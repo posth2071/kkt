@@ -172,6 +172,13 @@ public final class KakaoDatabase {
         }.first
     }
 
+    public func recentTexts(chatId: Int64, limit: Int) throws -> [String] {
+        try query(KktConstants.recentTextsQuery, bind: [
+            .int64(chatId), .int(KktConstants.textMessageType),
+            .int64(KktConstants.pendingLogIdSentinel), .int(limit),
+        ]) { $0.string(KktConstants.zeroColumn) ?? KktConstants.emptyText }
+    }
+
     public func joinedChatId(code: String) throws -> Int64? {
         try query(KktConstants.joinChatIdQuery, bind: [.string(code)]) {
             $0.int64(KktConstants.joinFirstColumn)

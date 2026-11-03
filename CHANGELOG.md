@@ -1,5 +1,10 @@
 # 변경 기록
 
+## Unreleased
+
+- `send`에 `--via-card-room`·`--via-card-user`·`--via-card-nickname` 선택 옵션 추가. 1:1 방의 이름 검색 실패 시 기존 프로필 카드 흐름으로 방 열기.
+- 카드 전송 전 직접방 구성원 ID·DB 방 이름·최근 메시지의 AX 본문 대조로 대상 확인. 실패 시 전송 없이 창 정리, 기존 JSON 필드 유지.
+
 ## v0.1.0 — 2026-11-03
 
 - macOS 14 이상·Swift 6용 `KktCore` 라이브러리와 `kkt` CLI 제공.

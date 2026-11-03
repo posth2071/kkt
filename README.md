@@ -85,7 +85,7 @@ ID·이름·링크는 가상 예시입니다. 본인 계정의 값으로 바꿔 
 | 명령 | 용도·주요 옵션 | 예시 |
 |---|---|---|
 | `serve` | DB 이벤트 스트림. `--since-log-id`, `--interval`(기본 1초) | `kkt serve --since-log-id 18000000000000001 --interval 1` |
-| `send` | 글·사진 전송. `--chat-id`, `--text`, `--image`, `--dry-run` | `kkt send --chat-id 18000000000000001 --text "확인" --image "$HOME/Pictures/photo.png" --dry-run` |
+| `send` | 글·사진 전송. `--chat-id`, `--text`, `--image`, `--dry-run`, `--via-card-room`, `--via-card-user`, `--via-card-nickname` | `kkt send --chat-id 18000000000000001 --text "확인" --image "$HOME/Pictures/photo.png" --dry-run` |
 | `join` | 오픈채팅 참여·팀채팅 참여 요청. `--profile`, `--nickname`, `--dry-run` | `kkt join "https://open.kakao.com/o/AbCdEf12" --profile nickname --nickname "내닉네임" --dry-run` |
 | `contact` | 방의 프로필 카드에서 친구 추가·1:1 채팅 열기 | `kkt contact --room-chat-id 18000000000000001 --user-id 12345 --nickname "상대닉네임" --dry-run` |
 | `chats` | 방 목록. `--limit`(기본 50), `--json` | `kkt chats --limit 5 --json` |
@@ -99,6 +99,8 @@ ID·이름·링크는 가상 예시입니다. 본인 계정의 값으로 바꿔 
 - `--since`는 `7d`, `12h`, `30m` 같은 기간이며 `s`/`m`/`h`/`d`/`w` 단위를 지원합니다.
 - `--chat`은 DB 표시 이름을 사용합니다. 유일한 정확 일치를 우선하고, 그렇지 않으면 부분 일치 후보가 하나여야 합니다. 후보가 없거나 여러 개면 후보 목록과 종료코드 `2`를 반환합니다. `--chat-id`로 명확히 지정할 수 있습니다.
 - `send --image` 뒤에는 여러 이미지 경로를 전달할 수 있습니다. `join --profile`은 `kakao`(기본) 또는 `nickname`이며, 후자는 `--nickname`이 필요합니다. 팀채팅 링크는 `https://invite.kakao.com/tc/<token>` 형식을 지원합니다.
+- `send`의 선택 옵션 `--via-card-room <Int64>`(프로필 카드가 게시된 오픈채팅방 ID), `--via-card-user <Int64>`(상대 사용자 ID), `--via-card-nickname <String>`(카드의 닉네임)을 모두 지정하면, 1:1 방의 이름 검색이 `ambiguous_name` 또는 `not_found`로 실패했을 때 카드로 방을 엽니다. 일부만 지정하면 기존 검색 경로를 유지합니다. 사용자 ID가 대상 1:1 방의 구성원과 다르면 거절합니다.
+- 카드 경로는 `contact`와 같은 OCR·스크롤·친구 추가 흐름을 사용하며, 클릭 중 잠시 카카오톡을 활성화한 뒤 포커스를 복원합니다. 새 창의 제목이 DB 방 이름과 같고, 최근 텍스트 메시지 20개 중 앞뒤 공백 제거 후 2자 이상인 본문 하나가 메시지 표의 AX 값과 일치해야 전송합니다. 텍스트 행이 전혀 없을 때만 제목으로 확인하며, 확인 실패 시 창을 닫고 `ambiguous_name`을 반환합니다. `--dry-run`도 카드 클릭·필요한 친구 추가·대상 확인은 수행하지만 메시지는 전송하지 않습니다. 카드 경로 오류는 `card_not_visible`, `button_not_found`, `contact_window_not_found` 등 기존 사유를 반환하며 JSON 필드는 바뀌지 않습니다.
 - `query`는 `SELECT`/`WITH`/`PRAGMA`로 시작하는 단일 문장만 허용합니다. 쓰기·`ATTACH`·여러 문장은 `read_only_sql`로 거절하고 DB도 읽기 전용으로 엽니다. 서버에서 과거 기록을 가져오지는 않습니다.
 
 ## 기계 출력 계약

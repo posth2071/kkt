@@ -140,6 +140,10 @@ do {
 
 `SendVerifier`는 본인 사용자 ID·시작 logId·정규화한 본문을 기준으로 전송을 확인합니다. 결과가 `uncertain`이면 이미 전송했을 수 있어 즉시 재시도하지 마세요. 저수준 `MessageInput`·`ImagePaste`를 직접 사용하면 전송 확인과 창 정리를 호출자가 책임져야 합니다.
 
+`execute(..., viaCard: CardRoute(roomChatId:userId:nickname:))`로 프로필 카드 폴백을 선택할 수 있습니다. 기본값은 `nil`이며 기존 검색 경로를 유지합니다. 직접방의 대상 해석 또는 창 열기에서 `ambiguous_name`·`not_found`가 발생한 경우에만 사용하며, `database.directChatId(userId:)`가 요청한 `chatId`와 같아야 합니다. `roomChatId`는 카드가 게시된 오픈채팅방, `nickname`은 카드에 표시된 이름입니다.
+
+카드 경로는 `ContactFlow`·`ContactAXUI`의 OCR 탐색·클릭·포커스 복원을 공유하며, 카드 닉네임과 다른 저장 이름을 가진 새 1:1 창도 받을 수 있습니다. 전송 전 제목이 DB 방 이름과 같은지, 최근 type-1 메시지 20개 중 앞뒤 공백 제거 후 2자 이상인 본문이 메시지 표의 정적 텍스트 AX 값과 정확히 일치하는지 확인합니다. `KakaoDatabase.recentTexts(chatId:limit:)`는 최신순 원문을 반환하며, 빈 값·짧은 본문은 대상 확인에서 제외합니다. 텍스트 행이 전혀 없을 때만 제목 확인으로 진행하고, 대상 확인 실패 시 새 창을 닫은 뒤 `KktError.ambiguous`를 던집니다. 카드가 있던 오픈채팅 창은 정리하고, 1:1 창은 기존 전송·검증·창 정리 흐름에 넘깁니다. 카드 경로 오류 사유는 `ContactFlow.failureReason(_:)`로 보존할 수 있고, `KktResult` 필드는 동일합니다. `dryRun`에서도 카드 클릭과 필요한 친구 추가는 수행합니다.
+
 `ChatOpener().open(_:)`은 `SendTarget.openLink(code:title:)`, `.direct(name:)`, `.group(name:)`, `.selfChat(name:)`를 받습니다. `RoomRow`에서 대상을 결정하는 `resolveTarget(chatId:room:sameNameCount:)`도 공개되어 있습니다. 직접 연 창은 반환된 핸들만 정리하세요.
 
 ```swift
@@ -253,7 +257,7 @@ let diagnosticExitCode = report.exitCode
 | `Database` | `KakaoDatabase`, `SQLValue`, `Row`, `DeviceInfo`, `KeyDerivation`, `UserIdRecovery`: DB 연결·계정 정보·키 계산 |
 | `Serve` | `ServeLoop`, `ServeCursor`, `KktEvent`, DB 이벤트 조회 확장 |
 | `UI` | `ChatOpener`, `ChatSearch`, `KakaoApp`, `AXHelpers`, `BackgroundInput`, `FocusGuard`, `UserWindowGuard`; 내부 메인 창 복구 |
-| `Send` | `SendOperation`, `SendTarget`, `RoomRow`, `MessageInput`, `ImagePaste`, `SendVerifier` |
+| `Send` | `SendOperation`, `SendTarget`, `CardRoute`, `RoomRow`, `MessageInput`, `ImagePaste`, `SendVerifier` |
 | `Join` | `JoinTarget`, `JoinProfile`, `JoinFlow`, `JoinUI`, `JoinAXUI`, `JoinScreenReader` |
 | `Contact` | `ContactFlow`, `ContactUI`, `ContactAXUI`, `ScreenText`, `TextBox`, 카드 위치 판정 함수 |
 | `Read` | `ReadQueries`, `ReadChat`, `ReadMessage`, `ReadQueryResult`, `RoomNames`, `ReadOnlySQL`, `TableOutput` |

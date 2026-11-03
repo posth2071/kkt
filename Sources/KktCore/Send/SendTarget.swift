@@ -33,6 +33,18 @@ public enum SendTarget: Equatable {
     case selfChat(name: String)
 }
 
+public struct CardRoute: Equatable {
+    public let roomChatId: Int64
+    public let userId: Int64
+    public let nickname: String
+
+    public init(roomChatId: Int64, userId: Int64, nickname: String) {
+        self.roomChatId = roomChatId
+        self.userId = userId
+        self.nickname = nickname
+    }
+}
+
 public func resolveTarget(chatId: Int64, room: RoomRow, sameNameCount: Int) throws -> SendTarget {
     guard room.chatId == chatId else { throw KktError.notFound(String(chatId)) }
     if room.type == KktConstants.selfRoomType { return .selfChat(name: room.displayName) }

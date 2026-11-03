@@ -284,9 +284,340 @@ final class SendQueryTests: XCTestCase {
             XCTAssertNil(rows.last?.message)
         }
     }
+
+    func testRecentTextsReturnsLatestTypeOneMessagesWithLimit() throws {
+        try withDatabase { reader, path in
+            let expected = try reader.sentRows(chatId: Fixture.chatId, after: KktConstants.noLogId).compactMap(\.message)
+            try write(Fixture.insertDelayed, path: path)
+            XCTAssertEqual(try reader.recentTexts(chatId: Fixture.chatId, limit: KktConstants.cardIdentityTextLimit),
+                           Array(expected.reversed()))
+            XCTAssertEqual(try reader.recentTexts(chatId: Fixture.chatId, limit: KktConstants.one),
+                           [try XCTUnwrap(expected.last)])
+            XCTAssertTrue(try reader.recentTexts(chatId: Fixture.missingChatId, limit: KktConstants.cardIdentityTextLimit).isEmpty)
+        }
+    }
+
+    func testRecentTextsPreservesEmptyAndShortRowsForIdentityRejection() throws {
+        try withDatabase { reader, path in
+            try write(KktConstants.SendTestSQL.identityRows, path: path)
+            XCTAssertEqual(try reader.recentTexts(chatId: Fixture.chatId, limit: KktConstants.cardIdentityMinimumTextLength),
+                           [KktConstants.SendTestSQL.shortText, KktConstants.emptyText])
+        }
+    }
+
+    func testRecentTextsCapsHistoryAtRequestedLimit() throws {
+        try withDatabase { reader, path in
+            try write(KktConstants.SendTestSQL.manyRows, path: path)
+            let texts = try reader.recentTexts(chatId: Fixture.chatId, limit: KktConstants.cardIdentityTextLimit)
+            XCTAssertEqual(texts.count, KktConstants.cardIdentityTextLimit)
+            XCTAssertTrue(texts.allSatisfy { $0 == Fixture.duplicateName })
+        }
+    }
+}
+
+private extension KktConstants {
+    enum SendTestSQL {
+        static let shortText = " 가 "
+        static let identityRows = """
+            INSERT INTO NTChatMessage VALUES (103,42,1,7,NULL), (104,42,1,7,'\(shortText)'),
+                (105,42,99,7,'non-text');
+            """
+        static let manyRows = """
+            WITH RECURSIVE history(logId) AS (
+                SELECT 103 UNION ALL SELECT logId+1 FROM history WHERE logId<133
+            ) INSERT INTO NTChatMessage SELECT logId,42,1,7,'동명' FROM history;
+            """
+    }
 }
 
 extension SendTests {
+    private var cardRoute: CardRoute {
+        CardRoute(roomChatId: Fixture.other, userId: Fixture.other, nickname: Fixture.differentText)
+    }
+
+    private final class CardUI {
+        let window = AXUIElementCreateApplication(Fixture.fakePid)
+        let table = AXUIElementCreateApplication(Fixture.fakePid + pid_t(Fixture.unique))
+        let row = AXUIElementCreateApplication(Fixture.fakePid + pid_t(Fixture.duplicate))
+        let text = AXUIElementCreateApplication(pid_t(Fixture.start))
+        var cardCalls: [CardRoute] = []
+        var sent = false
+        var closed = false
+        var inputChecked = false
+        var recorded = false
+        var waited = false
+        var textRole = kAXStaticTextRole as String
+
+        func dependencies(room: RoomRow) -> SendOperation.Dependencies {
+            var dependencies = SendOperation.Dependencies()
+            dependencies.room = { _ in room }
+            dependencies.sameNameCount = { _ in Fixture.duplicate }
+            dependencies.currentMaxLogId = { Fixture.start }
+            dependencies.myUserId = { Fixture.me }
+            dependencies.open = { _ in XCTFail(); return self.window }
+            dependencies.openViaCard = { self.cardCalls.append($0); return self.window }
+            dependencies.directChatId = { userId in
+                XCTAssertEqual(userId, Fixture.other)
+                return Fixture.chatId
+            }
+            dependencies.recentTexts = { chatId, limit in
+                XCTAssertEqual(chatId, Fixture.chatId)
+                XCTAssertEqual(limit, KktConstants.cardIdentityTextLimit)
+                return [Fixture.text]
+            }
+            dependencies.title = { _ in room.displayName }
+            dependencies.identifier = { CFEqual($0, self.table) ? KktConstants.DoctorAX.messageTable : nil }
+            dependencies.children = { element in
+                if CFEqual(element, self.window) { return [self.table] }
+                if CFEqual(element, self.table) { return [self.row] }
+                if CFEqual(element, self.row) { return [self.text] }
+                return []
+            }
+            dependencies.role = { element in
+                if CFEqual(element, self.table) { return kAXTableRole as String }
+                if CFEqual(element, self.text) { return self.textRole }
+                return kAXGroupRole as String
+            }
+            dependencies.value = { _ in Fixture.text }
+            dependencies.close = { _ in self.closed = true }
+            dependencies.isWindowOpen = { _ in !self.closed }
+            dependencies.inputState = { _ in self.inputChecked = true; return .ready }
+            dependencies.send = { _, text, images in
+                XCTAssertTrue(self.waited)
+                XCTAssertEqual(text, Fixture.text)
+                XCTAssertTrue(images.isEmpty)
+                self.sent = true
+            }
+            dependencies.wait = { self.waited = true }
+            dependencies.record = { self.recorded = true }
+            dependencies.verify = { chatId, start, me, text, _ in
+                XCTAssertTrue(self.recorded)
+                XCTAssertEqual(chatId, Fixture.chatId)
+                XCTAssertEqual(start, Fixture.start)
+                XCTAssertEqual(me, Fixture.me)
+                XCTAssertEqual(text, Fixture.text)
+                return .sent(logId: Fixture.next)
+            }
+            return dependencies
+        }
+    }
+
+    func testAmbiguousWithoutCardRoutePropagatesUnchanged() {
+        let ui = CardUI()
+        let dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false)) {
+            XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+        }
+        XCTAssertTrue(ui.cardCalls.isEmpty)
+        XCTAssertFalse(ui.sent)
+    }
+
+    func testAmbiguousDirectRoomUsesCardAndSends() throws {
+        let ui = CardUI()
+        let dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        let result = try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)
+        XCTAssertEqual(result, KktResult(result: KktConstants.sentResult, chatId: Fixture.chatId, logId: Fixture.next))
+        XCTAssertEqual(ui.cardCalls, [cardRoute])
+        XCTAssertTrue(ui.sent)
+        XCTAssertTrue(ui.closed)
+    }
+
+    // KakaoTalk 26.9 exposes message bubble bodies as AXTextArea inside the message table (measured 2026-11-03).
+    func testCardIdentityMatchesBubbleTextArea() throws {
+        let ui = CardUI()
+        ui.textRole = kAXTextAreaRole as String
+        let dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        let result = try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)
+        XCTAssertEqual(result.result, KktConstants.sentResult)
+        XCTAssertTrue(ui.sent)
+    }
+
+    func testSearchOpenerNotFoundOrAmbiguousUsesCard() throws {
+        for error in [KktError.notFound(Fixture.title), .ambiguous(Fixture.title)] {
+            let ui = CardUI()
+            var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+            dependencies.sameNameCount = { _ in Fixture.unique }
+            dependencies.open = { _ in throw error }
+            let result = try SendOperation(dependencies: dependencies)
+                .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)
+            XCTAssertEqual(result.result, KktConstants.sentResult)
+            XCTAssertEqual(ui.cardCalls, [cardRoute])
+            XCTAssertTrue(ui.sent)
+        }
+    }
+
+    func testMismatchedOrMissingDirectMemberRefusesCard() {
+        for chatId in [Fixture.other, nil] {
+            let ui = CardUI()
+            var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+            dependencies.directChatId = { _ in chatId }
+            XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+                .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+                XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+            }
+            XCTAssertTrue(ui.cardCalls.isEmpty)
+            XCTAssertFalse(ui.sent)
+        }
+    }
+
+    func testCardIdentityMismatchClosesBeforeInput() {
+        for titleMatches in [true, false] {
+            let ui = CardUI()
+            var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+            dependencies.title = { _ in titleMatches ? Fixture.title : Fixture.differentText }
+            dependencies.value = { _ in titleMatches ? Fixture.differentText : Fixture.text }
+            XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+                .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+                XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+            }
+            XCTAssertEqual(ui.cardCalls, [cardRoute])
+            XCTAssertTrue(ui.closed)
+            XCTAssertFalse(ui.inputChecked)
+            XCTAssertFalse(ui.sent)
+        }
+    }
+
+    func testCardIdentityRequiresTextInsideMessageTable() {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.children = { CFEqual($0, ui.window) ? [ui.text] : [] }
+        XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+            XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+        }
+        XCTAssertTrue(ui.closed)
+        XCTAssertFalse(ui.sent)
+    }
+
+    func testCardIdentityRejectsMatchingTextInAnotherTable() {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.identifier = { _ in nil }
+        XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+            XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+        }
+        XCTAssertTrue(ui.closed)
+        XCTAssertFalse(ui.sent)
+    }
+
+    func testCardIdentityRejectsShortOrEmptyTextsEvenWhenTheyMatch() {
+        for text in [String(Fixture.text.prefix(KktConstants.one)), KktConstants.emptyText, KktConstants.newline] {
+            let ui = CardUI()
+            var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+            dependencies.recentTexts = { _, _ in [text] }
+            dependencies.value = { _ in text }
+            XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+                .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+                XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+            }
+            XCTAssertTrue(ui.closed)
+            XCTAssertFalse(ui.inputChecked)
+            XCTAssertFalse(ui.sent)
+        }
+    }
+
+    func testCardIdentityTrimsDatabaseTextAndAcceptsAnyRecentMatch() throws {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.recentTexts = { _, _ in [Fixture.differentText, KktConstants.newline + Fixture.text + KktConstants.newline] }
+        let result = try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)
+        XCTAssertEqual(result.result, KktConstants.sentResult)
+        XCTAssertTrue(ui.sent)
+    }
+
+    func testCardIdentityWithoutDatabaseTextsUsesTitle() throws {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.recentTexts = { _, _ in [] }
+        dependencies.children = { _ in [] }
+        let result = try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)
+        XCTAssertEqual(result.result, KktConstants.sentResult)
+        XCTAssertTrue(ui.sent)
+    }
+
+    func testGroupRoomNeverUsesCard() {
+        let ui = CardUI()
+        let dependencies = ui.dependencies(room: room(type: Fixture.groupType))
+        XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+            XCTAssertEqual($0 as? KktError, .ambiguous(Fixture.title))
+        }
+        XCTAssertTrue(ui.cardCalls.isEmpty)
+        XCTAssertFalse(ui.sent)
+    }
+
+    func testCardPathFailureReasonPropagates() {
+        for error in [KktError.automation(KktConstants.cardNotVisibleCode),
+                      .automation(KktConstants.buttonNotFoundCode), .automation(KktConstants.contactWindowMissingCode),
+                      .kakaoInUse, .chatWindowOpen] {
+            let ui = CardUI()
+            var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+            dependencies.openViaCard = { _ in throw error }
+            XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+                .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+                XCTAssertEqual($0 as? KktError, error)
+                XCTAssertEqual(ContactFlow.failureReason($0), ContactFlow.failureReason(error))
+            }
+            XCTAssertFalse(ui.sent)
+        }
+    }
+
+    func testSuccessfulSearchDoesNotUseCardOrIdentityChecks() throws {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.sameNameCount = { _ in Fixture.unique }
+        dependencies.open = { _ in ui.window }
+        dependencies.directChatId = { _ in XCTFail(); return nil }
+        dependencies.recentTexts = { _, _ in XCTFail(); return [] }
+        let result = try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)
+        XCTAssertEqual(result.result, KktConstants.sentResult)
+        XCTAssertTrue(ui.cardCalls.isEmpty)
+        XCTAssertTrue(ui.sent)
+    }
+
+    func testOtherSearchErrorsDoNotUseCard() {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.sameNameCount = { _ in Fixture.unique }
+        dependencies.open = { _ in throw KktError.chatWindowOpen }
+        XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+            XCTAssertEqual($0 as? KktError, .chatWindowOpen)
+        }
+        XCTAssertTrue(ui.cardCalls.isEmpty)
+    }
+
+    func testDatabaseNotFoundDoesNotTriggerCard() {
+        let ui = CardUI()
+        var dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        dependencies.sameNameCount = { _ in throw KktError.notFound(Fixture.title) }
+        XCTAssertThrowsError(try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false, viaCard: cardRoute)) {
+            XCTAssertEqual($0 as? KktError, .notFound(Fixture.title))
+        }
+        XCTAssertTrue(ui.cardCalls.isEmpty)
+    }
+
+    func testCardDryRunChecksIdentityWithoutSending() throws {
+        let ui = CardUI()
+        let dependencies = ui.dependencies(room: room(type: Fixture.directType))
+        let result = try SendOperation(dependencies: dependencies)
+            .execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: true, viaCard: cardRoute)
+        XCTAssertEqual(result, KktResult(result: KktConstants.dryRunResult, chatId: Fixture.chatId))
+        XCTAssertEqual(ui.cardCalls, [cardRoute])
+        XCTAssertTrue(ui.closed)
+        XCTAssertFalse(ui.sent)
+        XCTAssertFalse(ui.waited)
+        XCTAssertFalse(ui.recorded)
+    }
+
     func testMessageInputProceedsWhenKakaoTalkIsBackgroundBeforeImagePaste() throws {
         let window = AXUIElementCreateApplication(Fixture.fakePid)
         let scroll = AXUIElementCreateApplication(Fixture.fakePid + pid_t(KktConstants.singleUnit))
