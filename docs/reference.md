@@ -57,7 +57,7 @@ ID·이름·링크는 가상 예시입니다. 본인 계정의 값으로 바꿔 
 | `query` | 읽기 전용 SQL | `kkt query "SELECT COUNT(*) FROM NTChatMessage" --json` |
 | `notice` | 방 공지 읽기. `--chat-id` 또는 `--chat` | `kkt notice --chat "미션방" --json` |
 | `doctor` | 환경·호환성 진단 | `kkt doctor --json` |
-| `--version` | kkt 버전 출력 | `kkt --version` |
+| `--version` | 터미널에서는 kkt·카카오톡·macOS 버전과 실행 파일 경로를, 파이프에서는 `kkt 0.2.0` 한 줄만 출력 | `kkt --version` |
 | `auth` | 로컬 사용자 ID 복구·DB 검증·설정 저장 | `kkt auth` |
 
 - `--since`는 `7d`, `12h`, `30m` 같은 기간이며 `s`/`m`/`h`/`d`/`w` 단위를 지원합니다.

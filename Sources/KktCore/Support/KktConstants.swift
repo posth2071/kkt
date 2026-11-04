@@ -7,7 +7,7 @@ public enum KktConstants {
     public static let userIdEnv = "KKT_USER_ID"
     public static let compatModesNewestFirst = [4, 3]
     public static let commandName = "kkt"
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
     public static let serveBatchLimit = 500
     public static let serveDefaultInterval = 1.0
     public static let serveHeartbeatSeconds = 30.0

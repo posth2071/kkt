@@ -8,7 +8,7 @@
 brew install sqlcipher
 ```
 
-사용할 패키지의 `Package.swift`에 의존성과 제품을 추가합니다. `OWNER`는 저장소 소유자 자리표시자이며, 비공개 저장소는 빌드 환경에 Git 읽기 인증이 필요합니다. 토큰을 매니페스트에 넣지 마세요. `v0.1.0` 태그가 게시된 뒤 사용하는 예시입니다.
+사용할 패키지의 `Package.swift`에 의존성과 제품을 추가합니다. `OWNER`는 저장소 소유자 자리표시자이며, 비공개 저장소는 빌드 환경에 Git 읽기 인증이 필요합니다. 토큰을 매니페스트에 넣지 마세요. `v0.2.0` 태그가 게시된 뒤 사용하는 예시입니다.
 
 ```swift
 // swift-tools-version: 6.0
@@ -18,7 +18,7 @@ let package = Package(
     name: "MyKakaoTool",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/OWNER/kkt.git", from: "0.1.0"),
+        .package(url: "https://github.com/OWNER/kkt.git", from: "0.2.0"),
     ],
     targets: [
         .executableTarget(
