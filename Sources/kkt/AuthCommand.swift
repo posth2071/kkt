@@ -13,8 +13,10 @@ struct AuthCommand: ParsableCommand {
             var config = try KktConfig.load(environment: ProcessInfo.processInfo.environment)
             if config.userId == nil {
                 guard let hash = DeviceInfo.activeAccountHash(),
-                      let userId = UserIdRecovery.recover(sha512Hex: hash, range: KktConstants.recoveryRange,
-                                                          workers: ProcessInfo.processInfo.activeProcessorCount) else {
+                      let userId = ProgressIndicator.forTerminal().during(.checkingAccount, {
+                          UserIdRecovery.recover(sha512Hex: hash, range: KktConstants.recoveryRange,
+                                                 workers: ProcessInfo.processInfo.activeProcessorCount)
+                      }) else {
                     throw KktError.notFound(KktConstants.userIdEnv)
                 }
                 config.userId = userId

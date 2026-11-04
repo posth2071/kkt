@@ -21,13 +21,15 @@ struct ContactCommand: ParsableCommand {
     func run() throws {
         let result: KktResult
         do {
-            guard KakaoApp.runningPid() != nil else { throw KktError.kakaoNotRunning }
-            try KakaoApp.checkNotInUse()
-            let config = try KktConfig.load(environment: ProcessInfo.processInfo.environment)
-            let lock = KktLock(path: config.lockPath)
-            defer { lock.release() }
-            try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
-            result = try MainWindowKeeper().preserving { try execute(config: config) }
+            result = try ProgressIndicator.forTerminal().during(.handlingContact) {
+                guard KakaoApp.runningPid() != nil else { throw KktError.kakaoNotRunning }
+                try KakaoApp.checkNotInUse()
+                let config = try KktConfig.load(environment: ProcessInfo.processInfo.environment)
+                let lock = KktLock(path: config.lockPath)
+                defer { lock.release() }
+                try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
+                return try MainWindowKeeper().preserving { try execute(config: config) }
+            }
         } catch {
             result = KktResult(result: KktConstants.failedResult, reason: ContactFlow.failureReason(error))
         }

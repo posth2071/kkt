@@ -40,11 +40,15 @@ struct NoticeCommand: ParsableCommand {
             let reader = NoticeReader(fetch: { chatId in
                 try ReadQueries.retry { try NoticeReader.databaseNotice(database: database, chatId: chatId) }
             }, screen: { chatId in
-                let lock = KktLock(path: config.lockPath)
-                try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
-                defer { lock.release() }
-                let target = try ReadQueries.retry { try NoticeReader.screenTarget(database: database, chatId: chatId) }
-                return try MainWindowKeeper().preserving { try NoticeAX().read(target) }
+                try ProgressIndicator.forTerminal(json: json).during(.readingNotice) {
+                    let lock = KktLock(path: config.lockPath)
+                    try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
+                    defer { lock.release() }
+                    let target = try ReadQueries.retry {
+                        try NoticeReader.screenTarget(database: database, chatId: chatId)
+                    }
+                    return try MainWindowKeeper().preserving { try NoticeAX().read(target) }
+                }
             })
             let result = try reader.read(chatId: id)
             if json { KktOutput.emit(result) }

@@ -126,6 +126,8 @@ kkt serve --interval 1 | your-agent
 > [!IMPORTANT]
 > 채팅방 ID와 메시지 ID는 2^53보다 클 수 있습니다. JavaScript 일반 `JSON.parse`로 읽으면 값이 깨지니 정밀도를 보존하는 파서를 쓰세요.
 
+터미널에서 실행하면 오래 걸리는 작업의 진행 단계가 표준오류에 잠깐 표시됩니다. 파이프나 파일로 받을 때는 나오지 않고, 표준출력의 결과에도 섞이지 않습니다. PTY로 실행하며 화면 출력을 읽는 도구는 `KKT_NO_PROGRESS=1`로 끄세요.
+
 출력 필드와 실패 코드는 [레퍼런스](docs/reference.md#기계-출력-계약)에 있고, Swift에서 쓰려면 [라이브러리 가이드](docs/library.md)를 보세요.
 
 ## 동작 원리

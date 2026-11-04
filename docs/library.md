@@ -146,6 +146,8 @@ do {
 
 `execute(..., viaCard: CardRoute(roomChatId:userId:nickname:))`로 프로필 카드 폴백을 선택할 수 있습니다. 기본값은 `nil`이며 기존 검색 경로를 유지합니다. 직접방의 대상 해석 또는 창 열기에서 `ambiguous_name`·`not_found`가 발생한 경우에만 사용하며, `database.directChatId(userId:)`가 요청한 `chatId`와 같아야 합니다. `roomChatId`는 카드가 게시된 오픈채팅방, `nickname`은 카드에 표시된 이름입니다.
 
+`execute(..., progress: { stage in ... })`로 진행 단계(`ProgressStage`)를 받을 수 있습니다. 기본값은 아무것도 하지 않으며, `stage.label`은 표시용 문구입니다. 콜백은 `execute`를 호출한 스레드에서 실행됩니다.
+
 카드 경로는 `ContactFlow`·`ContactAXUI`의 OCR 탐색·클릭·포커스 복원을 공유하며, 카드 닉네임과 다른 저장 이름을 가진 새 1:1 창도 받을 수 있습니다. 전송 전 제목이 DB 방 이름과 같은지, 최근 type-1 메시지 20개 중 앞뒤 공백 제거 후 2자 이상인 본문이 메시지 표의 정적 텍스트 AX 값과 정확히 일치하는지 확인합니다. `KakaoDatabase.recentTexts(chatId:limit:)`는 최신순 원문을 반환하며, 빈 값·짧은 본문은 대상 확인에서 제외합니다. 텍스트 행이 전혀 없을 때만 제목 확인으로 진행하고, 대상 확인 실패 시 새 창을 닫은 뒤 `KktError.ambiguous`를 던집니다. 카드가 있던 오픈채팅 창은 정리하고, 1:1 창은 기존 전송·검증·창 정리 흐름에 넘깁니다. 카드 경로 오류 사유는 `ContactFlow.failureReason(_:)`로 보존할 수 있고, `KktResult` 필드는 동일합니다. `dryRun`에서도 카드 클릭과 필요한 친구 추가는 수행합니다.
 
 `ChatOpener().open(_:)`은 `SendTarget.openLink(code:title:)`, `.direct(name:)`, `.group(name:)`, `.selfChat(name:)`를 받습니다. `RoomRow`에서 대상을 결정하는 `resolveTarget(chatId:room:sameNameCount:)`도 공개되어 있습니다. 직접 연 창은 반환된 핸들만 정리하세요.

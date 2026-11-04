@@ -112,10 +112,11 @@ public final class SendOperation {
         self.init(dependencies: dependencies)
     }
 
-    public func execute(chatId: Int64, text: String, images: [String], dryRun: Bool,
-                        viaCard: CardRoute? = nil) throws -> KktResult {
+    public func execute(chatId: Int64, text: String, images: [String], dryRun: Bool, viaCard: CardRoute? = nil,
+                        progress: (ProgressStage) -> Void = { _ in }) throws -> KktResult {
         guard let room = try dependencies.room(chatId) else { throw KktError.notFound(String(chatId)) }
         let count = room.needsNameLookup ? try dependencies.sameNameCount(room.displayName) : KktConstants.noMatchingNames
+        progress(.openingRoom)
         let (start, window) = try openWindow(chatId: chatId, room: room, sameNameCount: count, viaCard: viaCard)
         let result: KktResult
         do {
@@ -129,9 +130,11 @@ public final class SendOperation {
             } else {
                 let myUserId = try dependencies.myUserId()
                 let paths = images.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+                progress(images.isEmpty ? .sending : .pastingImages(images.count))
                 try dependencies.wait()
                 let route = try dependencies.send(window, text, paths)
                 try dependencies.record()
+                progress(.verifying)
                 let timeout = images.isEmpty ? KktConstants.sendVerifyTimeout : KktConstants.imageVerifyTimeout
                 switch try dependencies.verify(chatId, start, myUserId, text, timeout) {
                 case .sent(let logId):

@@ -32,23 +32,29 @@ struct SendCommand: ParsableCommand {
     }
 
     func run() throws {
+        let progress = ProgressIndicator.forTerminal()
         do {
-            guard KakaoApp.runningPid() != nil else { throw KktError.kakaoNotRunning }
-            let config = try KktConfig.load(environment: ProcessInfo.processInfo.environment)
-            let lock = KktLock(path: config.lockPath)
-            defer { lock.release() }
-            try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
-            let reader = try KakaoDatabase.open(config: config)
-            defer { reader.close() }
-            let operation = SendOperation(reader: reader, interval: SendInterval(path: config.lockPath))
-            KktOutput.emit(try MainWindowKeeper().preserving {
-                try operation.execute(chatId: chatId, text: text, images: images, dryRun: dryRun, viaCard: cardRoute)
-            })
+            KktOutput.emit(try progress.during(.preparing) { try execute(progress: progress) })
         } catch {
             KktOutput.emit(KktResult(result: KktConstants.failedResult,
                 reason: cardRoute == nil ? (error as? KktError)?.code ?? KktConstants.automationCode
                     : ContactFlow.failureReason(error)))
             throw ExitCode(KktConstants.failureExitCode)
+        }
+    }
+
+    private func execute(progress: ProgressIndicator) throws -> KktResult {
+        guard KakaoApp.runningPid() != nil else { throw KktError.kakaoNotRunning }
+        let config = try KktConfig.load(environment: ProcessInfo.processInfo.environment)
+        let lock = KktLock(path: config.lockPath)
+        defer { lock.release() }
+        try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
+        let reader = try KakaoDatabase.open(config: config)
+        defer { reader.close() }
+        let operation = SendOperation(reader: reader, interval: SendInterval(path: config.lockPath))
+        return try MainWindowKeeper().preserving {
+            try operation.execute(chatId: chatId, text: text, images: images, dryRun: dryRun, viaCard: cardRoute,
+                                  progress: progress.update)
         }
     }
 }
