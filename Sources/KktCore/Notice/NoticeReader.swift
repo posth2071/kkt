@@ -6,6 +6,7 @@ public struct NoticeResult: Encodable, Equatable {
     public let source: String
     public let truncated: Bool
     public let updatedAt: Int64
+    public let messageDeleted: Bool
     public var exitCode: Int32 { KktConstants.successExitCode }
     public var humanReadable: String {
         KktConstants.Notice.heading + KktConstants.newline
@@ -14,12 +15,18 @@ public struct NoticeResult: Encodable, Equatable {
             + KktConstants.newline + text
     }
 
-    public init(chatId: Int64, text: String, source: String, truncated: Bool, updatedAt: Int64) {
+    private enum CodingKeys: String, CodingKey {
+        case chatId, text, source, truncated, updatedAt
+    }
+
+    public init(chatId: Int64, text: String, source: String, truncated: Bool, updatedAt: Int64,
+                messageDeleted: Bool = false) {
         self.chatId = chatId
         self.text = text
         self.source = source
         self.truncated = truncated
         self.updatedAt = updatedAt
+        self.messageDeleted = messageDeleted
     }
 }
 
@@ -33,15 +40,24 @@ public struct NoticeReader {
     }
 
     public func read(chatId: Int64) throws -> NoticeResult {
-        guard let notice = try fetch(chatId) else { throw KktError.notFound(String(chatId)) }
+        guard let notice = try fetch(chatId) else { return try readWithoutRow(chatId: chatId) }
         // KakaoTalk caps the stored preview at 500 UTF-16 units (measured); Swift Characters merge "\r\n" and undercount.
-        guard notice.text.utf16.count >= KktConstants.Notice.truncationThreshold else { return notice }
+        guard notice.messageDeleted || notice.text.utf16.count >= KktConstants.Notice.truncationThreshold else {
+            return notice
+        }
         if let text = try? screen(chatId), !text.isEmpty {
             return NoticeResult(chatId: chatId, text: text, source: KktConstants.Notice.screen,
                                 truncated: false, updatedAt: notice.updatedAt)
         }
         return NoticeResult(chatId: chatId, text: notice.text, source: KktConstants.Notice.truncated,
                             truncated: true, updatedAt: notice.updatedAt)
+    }
+
+    private func readWithoutRow(chatId: Int64) throws -> NoticeResult {
+        guard let text = try screen(chatId), !text.isEmpty else { throw KktError.notFound(String(chatId)) }
+        let updatedAt = (try? fetch(chatId))?.updatedAt ?? KktConstants.Notice.unknownUpdatedAt
+        return NoticeResult(chatId: chatId, text: text, source: KktConstants.Notice.screen,
+                            truncated: false, updatedAt: updatedAt)
     }
 
     public static func databaseNotice(database: KakaoDatabase, chatId: Int64) throws -> NoticeResult? {
@@ -52,8 +68,10 @@ public struct NoticeReader {
                   let text = objects.first(where: {
                       $0[KktConstants.Notice.typeKey] as? Int == KktConstants.Notice.noticeType
                   })?[KktConstants.Notice.contentKey] as? String else { return nil }
+            let type = row.int64(KktConstants.Notice.typeColumn)
             return NoticeResult(chatId: chatId, text: text, source: KktConstants.Notice.database,
-                                truncated: false, updatedAt: row.int64(KktConstants.Notice.updatedAtColumn))
+                                truncated: false, updatedAt: row.int64(KktConstants.Notice.updatedAtColumn),
+                                messageDeleted: type & KktConstants.Notice.deletedTypeFlag != .zero)
         }
         return notices.lazy.compactMap { $0 }.first
     }
@@ -81,15 +99,18 @@ extension KktConstants {
         public static let heading = "chatId / source / truncated / updatedAt"
         public static let separator = " / "
         static let truncationThreshold = 490
+        static let unknownUpdatedAt: Int64 = 0
         static let objectsKey = "os"
         static let typeKey = "t"
         static let contentKey = "ct"
         static let noticeType = 1
         static let attachmentColumn: Int32 = 0
         static let updatedAtColumn: Int32 = 1
+        static let typeColumn: Int32 = 2
+        static let deletedTypeFlag: Int64 = 16384
         static let query = """
-            SELECT attachment, sentAt FROM NTChatMessage
-            WHERE chatId=? AND type=24 ORDER BY logId DESC
+            SELECT attachment, sentAt, type FROM NTChatMessage
+            WHERE chatId=? AND (type & 16383)=24 ORDER BY logId DESC
             """
     }
 }

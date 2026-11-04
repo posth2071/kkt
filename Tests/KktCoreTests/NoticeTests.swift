@@ -104,14 +104,103 @@ final class NoticeTests: XCTestCase {
         XCTAssertNil(try NoticeReader.databaseNotice(database: database, chatId: 8))
     }
 
-    func testMissingNoticeAndDatabaseErrorsDoNotOpenScreen() {
-        for error in [nil, KktError.databaseUnavailable] {
-            let reader = NoticeReader(fetch: { _ in
-                if let error { throw error }
-                return nil
-            }, screen: { _ in XCTFail("No UI for missing or failed DB reads"); return nil })
+    func testDatabaseFindsDeletedNoticeAsLatest() throws {
+        let database = try noticeDatabase(rows: """
+            (1, 18000000000000001, 24, '{"os":[{"t":1,"ct":"과거 공지"}]}', 1700000000),
+            (2, 18000000000000001, 16408, '{"os":[{"t":1,"ct":"삭제 표시 공지"}]}', 1800000000),
+            (3, 18000000000000001, 16385, '{"os":[{"t":1,"ct":"삭제된 글"}]}', 1800000001)
+            """)
+        defer { database.close() }
+        let result = try XCTUnwrap(NoticeReader.databaseNotice(database: database, chatId: Fixture.chatId))
+        XCTAssertEqual(result.text, "삭제 표시 공지")
+        XCTAssertEqual(result.updatedAt, Fixture.updatedAt)
+        XCTAssertTrue(result.messageDeleted)
+    }
+
+    func testDatabasePlainNoticeIsNotDeleted() throws {
+        let database = try noticeDatabase(rows: """
+            (1, 18000000000000001, 16408, '{"os":[{"t":1,"ct":"삭제 표시 공지"}]}', 1700000000),
+            (2, 18000000000000001, 24, '{"os":[{"t":1,"ct":"최신 공지"}]}', 1800000000)
+            """)
+        defer { database.close() }
+        let result = try XCTUnwrap(NoticeReader.databaseNotice(database: database, chatId: Fixture.chatId))
+        XCTAssertEqual(result.text, "최신 공지")
+        XCTAssertFalse(result.messageDeleted)
+    }
+
+    func testDeletedShortNoticeIsCheckedOnScreen() throws {
+        let reader = NoticeReader(fetch: { _ in self.notice(Fixture.shortText, deleted: true) },
+                                  screen: { _ in Fixture.fullText })
+        let result = try reader.read(chatId: Fixture.chatId)
+        XCTAssertEqual(result.text, Fixture.fullText)
+        XCTAssertEqual(result.source, "screen")
+        XCTAssertFalse(result.truncated)
+        XCTAssertEqual(result.updatedAt, Fixture.updatedAt)
+    }
+
+    func testDeletedNoticeIsMarkedUnverifiedWhenScreenFails() throws {
+        let screens: [(Int64) throws -> String?] = [{ _ in nil }, { _ in throw KktError.chatWindowOpen }]
+        for screen in screens {
+            let reader = NoticeReader(fetch: { _ in self.notice(Fixture.shortText, deleted: true) }, screen: screen)
+            let result = try reader.read(chatId: Fixture.chatId)
+            XCTAssertEqual(result.text, Fixture.shortText)
+            XCTAssertEqual(result.source, "truncated")
+            XCTAssertTrue(result.truncated)
+        }
+    }
+
+    func testDeletedFlagStaysOutOfOutput() throws {
+        let line = KktOutput.line(notice(Fixture.shortText, deleted: true))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["chatId", "text", "source", "truncated", "updatedAt"])
+    }
+
+    func testDatabaseErrorsDoNotOpenScreen() {
+        let reader = NoticeReader(fetch: { _ in throw KktError.databaseUnavailable },
+                                  screen: { _ in XCTFail("No UI for failed DB reads"); return nil })
+        XCTAssertThrowsError(try reader.read(chatId: Fixture.chatId)) {
+            XCTAssertEqual($0 as? KktError, .databaseUnavailable)
+        }
+    }
+
+    func testMissingRowReadsScreenThenRefetchesUpdatedAt() throws {
+        var fetches = Int.zero
+        let reader = NoticeReader(fetch: { _ in
+            fetches += 1
+            return fetches == 1 ? nil : self.notice(Fixture.preview)
+        }, screen: { chatId in
+            XCTAssertEqual(chatId, Fixture.chatId)
+            return Fixture.fullText
+        })
+        let result = try reader.read(chatId: Fixture.chatId)
+        XCTAssertEqual(result.text, Fixture.fullText)
+        XCTAssertEqual(result.source, "screen")
+        XCTAssertFalse(result.truncated)
+        XCTAssertEqual(result.updatedAt, Fixture.updatedAt)
+        XCTAssertEqual(fetches, 2)
+    }
+
+    func testMissingRowReportsZeroUpdatedAtWhenRowStaysMissing() throws {
+        let reader = NoticeReader(fetch: { _ in nil }, screen: { _ in Fixture.fullText })
+        let result = try reader.read(chatId: Fixture.chatId)
+        XCTAssertEqual(result.text, Fixture.fullText)
+        XCTAssertEqual(result.updatedAt, 0)
+    }
+
+    func testMissingRowWithoutScreenNoticeIsNotFound() {
+        for screenText: String? in [nil, ""] {
+            let reader = NoticeReader(fetch: { _ in nil }, screen: { _ in screenText })
             XCTAssertThrowsError(try reader.read(chatId: Fixture.chatId)) {
-                XCTAssertEqual($0 as? KktError, error ?? .notFound(String(Fixture.chatId)))
+                XCTAssertEqual($0 as? KktError, .notFound(String(Fixture.chatId)))
+            }
+        }
+    }
+
+    func testMissingRowKeepsScreenFailureReason() {
+        for error in [KktError.chatWindowOpen, .kakaoInUse, .busy] {
+            let reader = NoticeReader(fetch: { _ in nil }, screen: { _ in throw error })
+            XCTAssertThrowsError(try reader.read(chatId: Fixture.chatId)) {
+                XCTAssertEqual($0 as? KktError, error)
             }
         }
     }
@@ -240,9 +329,24 @@ final class NoticeTests: XCTestCase {
         XCTAssertEqual(effects.events, ["open", "close(room)"])
     }
 
-    private func notice(_ text: String) -> NoticeResult {
+    private func notice(_ text: String, deleted: Bool = false) -> NoticeResult {
         NoticeResult(chatId: Fixture.chatId, text: text, source: "database", truncated: false,
-                     updatedAt: Fixture.updatedAt)
+                     updatedAt: Fixture.updatedAt, messageDeleted: deleted)
+    }
+
+    private func noticeDatabase(rows: String) throws -> KakaoDatabase {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &writer), SQLITE_OK)
+        let handle = try XCTUnwrap(writer)
+        defer { sqlite3_close(handle) }
+        let schema = """
+            CREATE TABLE NTChatMessage (logId INTEGER, chatId INTEGER, type INTEGER, attachment TEXT, sentAt INTEGER);
+            INSERT INTO NTChatMessage VALUES \(rows);
+            """
+        XCTAssertEqual(sqlite3_exec(handle, schema, nil, nil, nil), SQLITE_OK)
+        return try KakaoDatabase.open(databasePath: path)
     }
 
     private final class ScreenEffects {

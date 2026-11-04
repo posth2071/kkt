@@ -207,7 +207,7 @@ do {
 
 ## 공지 읽기
 
-`NoticeReader(fetch:screen:)`는 DB 우선·긴 미리보기의 화면 보완·잘린 결과 반환 정책입니다. `NoticeResult`는 `chatId`, `text`, `source`, `truncated`, `updatedAt`을 제공합니다. 화면 접근 잠금은 `screen` 클로저에서만 잡을 수 있습니다.
+`NoticeReader(fetch:screen:)`는 DB 우선·긴 미리보기와 삭제 표시 공지, 공지 행이 없는 방의 화면 보완·잘린 결과 반환 정책입니다. `NoticeResult`는 `chatId`, `text`, `source`, `truncated`, `updatedAt`, `messageDeleted`를 제공합니다. `messageDeleted`는 `databaseNotice`가 읽은 행의 삭제 표시이며 JSON 출력에는 포함되지 않습니다. 화면 접근 잠금은 `screen` 클로저에서만 잡을 수 있습니다.
 
 ```swift
 let noticeReader = NoticeReader(fetch: { id in
@@ -225,7 +225,7 @@ let notice = try noticeReader.read(chatId: roomID)
 print(KktOutput.line(notice))
 ```
 
-`NoticeAX`는 공지 배너에서 상세 화면의 본문을 읽습니다. 화면 접근이 실패해도 DB 공지가 있으면 `source: "truncated"`, `truncated: true`가 될 수 있으므로 해당 필드를 확인하세요.
+`NoticeAX`는 공지 배너에서 상세 화면의 본문을 읽습니다. 화면 접근이 실패해도 DB 공지가 있으면 `source: "truncated"`, `truncated: true`가 될 수 있으므로 해당 필드를 확인하세요. DB 공지가 없으면 `screen` 클로저의 오류를 그대로 던지고, 배너가 없어 `nil`이면 `KktError.notFound`를 던집니다.
 
 ## 진단과 오류
 
