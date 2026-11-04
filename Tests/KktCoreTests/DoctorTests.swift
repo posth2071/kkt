@@ -51,6 +51,20 @@ final class DoctorTests: XCTestCase {
         XCTAssertEqual(try self.check("ax_identifiers", in: run(healthyProbes())).status, .ok)
     }
 
+    func testMissingBackgroundImagePathWarnsButKeepsForegroundFallback() throws {
+        var probes = healthyProbes()
+        probes.backgroundImage = { false }
+        let check = try check("image_background", in: run(probes))
+        XCTAssertEqual(check.status, .warn)
+        XCTAssertNotNil(check.fix)
+    }
+
+    func testAvailableBackgroundImagePathIsOk() throws {
+        var probes = healthyProbes()
+        probes.backgroundImage = { true }
+        XCTAssertEqual(try check("image_background", in: run(probes)).status, .ok)
+    }
+
     func testUserWindowsCountsNonMainWindows() throws {
         let windows = [Fixture.main, WindowInfo(identifier: "_NS:443", title: "엄마"),
                        WindowInfo(identifier: nil, title: "설정"),
@@ -82,7 +96,7 @@ final class DoctorTests: XCTestCase {
         XCTAssertEqual(report.checks.map(\.id), [
             "full_disk_access", "accessibility", "screen_recording", "sqlcipher", "user_id", "database_key",
             "kakaotalk_running", "kakaotalk_version", "main_window", "ax_identifiers", "lock", "user_windows",
-            "kakaotalk_frontmost",
+            "kakaotalk_frontmost", "image_background",
         ])
         XCTAssertTrue(report.checks.allSatisfy { $0.status == .ok })
         XCTAssertTrue(report.humanOutput.components(separatedBy: "\n")[0].contains(Fixture.executable))
@@ -90,7 +104,7 @@ final class DoctorTests: XCTestCase {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(KktOutput.line(report).utf8)) as? [String: Any])
         XCTAssertEqual(json["executablePath"] as? String, Fixture.executable)
         XCTAssertTrue((json["permissionNote"] as? String)?.contains("터미널/node") == true)
-        XCTAssertEqual((json["checks"] as? [[String: Any]])?.count, 13)
+        XCTAssertEqual((json["checks"] as? [[String: Any]])?.count, 14)
     }
 
     func testFrontmostIsInformationalEvenWhenKakaoTalkIsInUse() throws {

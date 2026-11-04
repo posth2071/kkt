@@ -13,7 +13,7 @@ public struct MessageInput {
             return AXUIElementGetPid(window, &pid) == .success ? pid : nil
         }
         var pressReturn: (pid_t) -> Void = BackgroundInput.pressReturn
-        var pasteImages: (AXUIElement, AXUIElement, [String]) throws -> Void = {
+        var pasteImages: (AXUIElement, AXUIElement, [String]) throws -> ImageRoute? = {
             try ImagePaste().send(in: $0, input: $1, images: $2)
         }
     }
@@ -38,16 +38,18 @@ public struct MessageInput {
         return nil
     }
 
-    public func send(in window: AXUIElement, message: String, images: [String]) throws {
-        guard !message.isEmpty || !images.isEmpty else { return }
+    @discardableResult
+    public func send(in window: AXUIElement, message: String, images: [String]) throws -> ImageRoute? {
+        guard !message.isEmpty || !images.isEmpty else { return nil }
         try KakaoApp.checkNotInUse(frontmostBundleId: dependencies.frontmostBundleId)
         guard let input = messageInputField(in: window) else { throw KktError.automation(KktConstants.automationCode) }
-        if !images.isEmpty { try dependencies.pasteImages(window, input, images) }
-        guard !message.isEmpty else { return }
+        let route = images.isEmpty ? nil : try dependencies.pasteImages(window, input, images)
+        guard !message.isEmpty else { return route }
         guard let pid = dependencies.pid(window), dependencies.setText(input, message) else {
             throw KktError.automation(KktConstants.automationCode)
         }
         dependencies.pressReturn(pid)
+        return route
     }
 }
 
@@ -72,7 +74,9 @@ public final class SendOperation {
         var sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
         var clock: () -> Date = { Date() }
         var inputState: (AXUIElement) -> InputState = { MessageInput().inputState(of: $0) }
-        var send: (AXUIElement, String, [String]) throws -> Void = { try MessageInput().send(in: $0, message: $1, images: $2) }
+        var send: (AXUIElement, String, [String]) throws -> ImageRoute? = {
+            try MessageInput().send(in: $0, message: $1, images: $2)
+        }
         var wait: () throws -> Void = {}
         var record: () throws -> Void = {}
         var verify: (Int64, Int64, Int64, String, TimeInterval) throws -> SendVerifier.Outcome = { _, _, _, _, _ in .uncertain }
@@ -126,19 +130,24 @@ public final class SendOperation {
                 let myUserId = try dependencies.myUserId()
                 let paths = images.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
                 try dependencies.wait()
-                try dependencies.send(window, text, paths)
+                let route = try dependencies.send(window, text, paths)
                 try dependencies.record()
                 let timeout = images.isEmpty ? KktConstants.sendVerifyTimeout : KktConstants.imageVerifyTimeout
                 switch try dependencies.verify(chatId, start, myUserId, text, timeout) {
-                case .sent(let logId): result = KktResult(result: KktConstants.sentResult, chatId: chatId, logId: logId)
-                case .uncertain: result = KktResult(result: KktConstants.uncertainResult, chatId: chatId)
+                case .sent(let logId):
+                    result = KktResult(result: KktConstants.sentResult, chatId: chatId, logId: logId,
+                                       imageRoute: route?.rawValue)
+                case .uncertain:
+                    result = KktResult(result: KktConstants.uncertainResult, chatId: chatId, imageRoute: route?.rawValue)
                 }
             }
         } catch {
             guard closeSafely(window) else { return KktResult(result: KktConstants.uncertainResult, chatId: chatId) }
             throw error
         }
-        guard closeSafely(window) else { return KktResult(result: KktConstants.uncertainResult, chatId: chatId) }
+        guard closeSafely(window) else {
+            return KktResult(result: KktConstants.uncertainResult, chatId: chatId, imageRoute: result.imageRoute)
+        }
         return result
     }
 

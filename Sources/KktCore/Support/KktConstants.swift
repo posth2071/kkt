@@ -227,6 +227,9 @@ public enum KktConstants {
     static let imageSendSuffix = "개 전송"
     static let imageSheetTimeout: TimeInterval = 15
     static let imageSheetPoll: TimeInterval = 0.3
+    static let backgroundPasteSettle: TimeInterval = 0.2
+    static let backgroundSheetTimeout: TimeInterval = 2
+    static let backgroundSheetPoll: TimeInterval = 0.1
     static let uploadCancelWarning = "채팅방을 닫으시겠습니까"
     static let uploadCancelButton = "취소"
     static let roomDisplayNameExpression =

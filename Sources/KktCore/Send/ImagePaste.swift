@@ -2,6 +2,11 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+public enum ImageRoute: String, Sendable {
+    case background
+    case foreground
+}
+
 public struct ImagePaste {
     typealias Clipboard = [[NSPasteboard.PasteboardType: Data]]
 
@@ -24,6 +29,15 @@ public struct ImagePaste {
             return pasteboard.writeObjects(paths.map { URL(fileURLWithPath: $0) as NSURL })
         }
         var paste: () throws -> Void = ImagePaste.paste
+        var acquireFocus: (AXUIElement) -> (() -> Void)? = { SkyLightFocus().acquire(window: $0) }
+        var pid: (AXUIElement) -> pid_t? = { element in
+            var pid: pid_t = .zero
+            return AXUIElementGetPid(element, &pid) == .success ? pid : nil
+        }
+        var focusInput: (AXUIElement) -> Bool = AXHelpers.focus
+        var pressPaste: (pid_t) -> Void = {
+            BackgroundInput.press(keyCode: KktConstants.pasteKey, flags: .maskCommand, pid: $0)
+        }
         var children: (AXUIElement) -> [AXUIElement] = AXHelpers.children
         var role: (AXUIElement) -> String? = AXHelpers.role
         var title: (AXUIElement) -> String? = AXHelpers.title
@@ -31,14 +45,22 @@ public struct ImagePaste {
         var sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
         var clock: () -> Date = { Date() }
     }
+    private enum BackgroundAttempt {
+        case unavailable
+        case pasted(AXUIElement)
+        case unanswered(Clipboard)
+    }
+
     private let dependencies: Dependencies
     public init() { dependencies = Dependencies() }
     init(dependencies: Dependencies) { self.dependencies = dependencies }
 
-    public func send(in window: AXUIElement, input: AXUIElement, images: [String], pasteOnly: Bool = false) throws {
-        guard !images.isEmpty else { return }
-        let sheet = try paste(in: window, input: input, images: images)
-        if pasteOnly { return }
+    @discardableResult
+    public func send(in window: AXUIElement, input: AXUIElement, images: [String],
+                     pasteOnly: Bool = false) throws -> ImageRoute? {
+        guard !images.isEmpty else { return nil }
+        let (sheet, route) = try paste(in: window, input: input, images: images)
+        if pasteOnly { return route }
         guard let button = dependencies.children(sheet).first(where: {
                   dependencies.role($0) == kAXButtonRole as String
                       && (dependencies.title($0) ?? KktConstants.emptyText).hasSuffix(KktConstants.imageSendSuffix)
@@ -57,12 +79,63 @@ public struct ImagePaste {
         let deadline = dependencies.clock().addingTimeInterval(KktConstants.imageSheetTimeout)
         while dependencies.children(window).contains(where: { dependencies.role($0) == kAXSheetRole as String }) {
             let remaining = deadline.timeIntervalSince(dependencies.clock())
-            guard remaining > KktConstants.zeroInterval else { return }
+            guard remaining > KktConstants.zeroInterval else { return route }
             dependencies.sleep(min(KktConstants.imageSheetPoll, remaining))
+        }
+        return route
+    }
+
+    private func paste(in window: AXUIElement, input: AXUIElement,
+                       images: [String]) throws -> (AXUIElement, ImageRoute) {
+        switch backgroundPaste(in: window, input: input, images: images) {
+        case .pasted(let sheet):
+            return (sheet, .background)
+        case .unavailable:
+            return (try foregroundPaste(in: window, input: input, images: images, keepsLateSheet: false), .foreground)
+        case .unanswered(let clipboard):
+            defer { dependencies.restoreClipboard(clipboard) }
+            return (try foregroundPaste(in: window, input: input, images: images, keepsLateSheet: true), .foreground)
         }
     }
 
-    private func paste(in window: AXUIElement, input: AXUIElement, images: [String]) throws -> AXUIElement {
+    private func backgroundPaste(in window: AXUIElement, input: AXUIElement, images: [String]) -> BackgroundAttempt {
+        guard let pid = dependencies.pid(window), let release = dependencies.acquireFocus(window) else { return .unavailable }
+        defer { release() }
+        guard let clipboard = try? dependencies.readClipboard() else { return .unavailable }
+        guard dependencies.writeFiles(images) else {
+            dependencies.restoreClipboard(clipboard)
+            return .unavailable
+        }
+        dependencies.sleep(KktConstants.actionSettle)
+        guard dependencies.focusInput(input) else {
+            dependencies.restoreClipboard(clipboard)
+            return .unavailable
+        }
+        dependencies.sleep(KktConstants.backgroundPasteSettle)
+        dependencies.pressPaste(pid)
+        guard let sheet = awaitSheet(in: window, timeout: KktConstants.backgroundSheetTimeout) else {
+            return .unanswered(clipboard)
+        }
+        dependencies.restoreClipboard(clipboard)
+        return .pasted(sheet)
+    }
+
+    private func visibleSheet(in window: AXUIElement) -> AXUIElement? {
+        dependencies.children(window).first { dependencies.role($0) == kAXSheetRole as String }
+    }
+
+    private func awaitSheet(in window: AXUIElement, timeout: TimeInterval) -> AXUIElement? {
+        let deadline = dependencies.clock().addingTimeInterval(timeout)
+        while true {
+            if let sheet = visibleSheet(in: window) { return sheet }
+            let remaining = deadline.timeIntervalSince(dependencies.clock())
+            guard remaining > KktConstants.zeroInterval else { return nil }
+            dependencies.sleep(min(KktConstants.backgroundSheetPoll, remaining))
+        }
+    }
+
+    private func foregroundPaste(in window: AXUIElement, input: AXUIElement, images: [String],
+                                 keepsLateSheet: Bool) throws -> AXUIElement {
         let restore = dependencies.captureFocus()
         defer { restore() }
         try dependencies.activate()
@@ -74,6 +147,7 @@ public struct ImagePaste {
         defer { dependencies.restoreClipboard(clipboard) }
         guard dependencies.writeFiles(images) else { throw KktError.automation(KktConstants.automationCode) }
         dependencies.sleep(KktConstants.actionSettle)
+        if keepsLateSheet, let sheet = visibleSheet(in: window) { return sheet }
         try dependencies.paste()
         let deadline = dependencies.clock().addingTimeInterval(KktConstants.imageSheetTimeout)
         while true {

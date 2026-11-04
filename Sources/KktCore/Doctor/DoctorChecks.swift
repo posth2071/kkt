@@ -19,12 +19,14 @@ public struct DoctorChecks {
         public var ui: (pid_t) -> AXIdentifierTable.Snapshot?
         public var lock: (String) -> LockState
         public var frontmost: () -> Bool
+        public var backgroundImage: () -> Bool
 
         public init(fullDiskAccess: @escaping () -> FileAccess, accessibility: @escaping () -> Bool,
                     screenRecording: @escaping () -> Bool, sqlcipher: @escaping () -> String?,
                     databaseKey: @escaping () -> Bool, runningPid: @escaping () -> pid_t?,
                     version: @escaping (pid_t) -> String?, ui: @escaping (pid_t) -> AXIdentifierTable.Snapshot?,
-                    lock: @escaping (String) -> LockState, frontmost: @escaping () -> Bool) {
+                    lock: @escaping (String) -> LockState, frontmost: @escaping () -> Bool,
+                    backgroundImage: @escaping () -> Bool = SkyLightFocus.isAvailable) {
             self.fullDiskAccess = fullDiskAccess
             self.accessibility = accessibility
             self.screenRecording = screenRecording
@@ -35,6 +37,7 @@ public struct DoctorChecks {
             self.ui = ui
             self.lock = lock
             self.frontmost = frontmost
+            self.backgroundImage = backgroundImage
         }
 
         public static func live(config: KktConfig?) -> Self {
@@ -112,6 +115,10 @@ public struct DoctorChecks {
             checks.append(.init(id: C.userWindows, status: .warn, detail: C.windowCountUnknown, fix: C.accessibilityFix))
         }
         checks.append(.init(id: C.frontmost, status: .ok, detail: probes.frontmost() ? C.frontmostTrue : C.frontmostFalse))
+        let background = probes.backgroundImage()
+        checks.append(.init(id: C.imageBackground, status: background ? .ok : .warn,
+                            detail: background ? C.imageBackgroundAvailable : C.imageBackgroundMissing,
+                            fix: background ? nil : C.imageBackgroundFix))
         return DoctorReport(executablePath: executablePath, checks: checks)
     }
 

@@ -7,6 +7,7 @@ public struct KktResult: Encodable, Equatable {
     public let logId: Int64?
     public let friendAdded: Bool?
     public let dryRun: Bool?
+    public let imageRoute: String?
 
     public init(
         result: String,
@@ -14,7 +15,8 @@ public struct KktResult: Encodable, Equatable {
         chatId: Int64? = nil,
         logId: Int64? = nil,
         friendAdded: Bool? = nil,
-        dryRun: Bool? = nil
+        dryRun: Bool? = nil,
+        imageRoute: String? = nil
     ) {
         self.result = result
         self.reason = reason
@@ -22,6 +24,7 @@ public struct KktResult: Encodable, Equatable {
         self.logId = logId
         self.friendAdded = friendAdded
         self.dryRun = dryRun
+        self.imageRoute = imageRoute
     }
 }
 

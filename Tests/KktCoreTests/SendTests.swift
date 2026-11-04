@@ -387,6 +387,7 @@ extension SendTests {
                 XCTAssertEqual(text, Fixture.text)
                 XCTAssertTrue(images.isEmpty)
                 self.sent = true
+                return nil
             }
             dependencies.wait = { self.waited = true }
             dependencies.record = { self.recorded = true }
@@ -628,7 +629,7 @@ extension SendTests {
         dependencies.frontmostBundleId = { frontmostBundleId }
         dependencies.children = { CFEqual($0, window) ? [scroll] : [input] }
         dependencies.role = { CFEqual($0, scroll) ? kAXScrollAreaRole as String : kAXTextAreaRole as String }
-        dependencies.pasteImages = { _, _, _ in frontmostBundleId = KakaoApp.bundleId }
+        dependencies.pasteImages = { _, _, _ in frontmostBundleId = KakaoApp.bundleId; return nil }
         dependencies.pid = { _ in Fixture.fakePid }
         dependencies.setText = { _, text in XCTAssertEqual(text, Fixture.text); return true }
         dependencies.pressReturn = { _ in events.append(Fixture.sendEvent) }
@@ -643,7 +644,7 @@ extension SendTests {
         dependencies.children = { _ in XCTFail(); return [] }
         dependencies.setText = { _, _ in XCTFail(); return false }
         dependencies.pressReturn = { _ in XCTFail() }
-        dependencies.pasteImages = { _, _, _ in XCTFail() }
+        dependencies.pasteImages = { _, _, _ in XCTFail(); return nil }
         XCTAssertThrowsError(try MessageInput(dependencies: dependencies)
             .send(in: element, message: Fixture.text, images: [Fixture.text])) {
             XCTAssertEqual($0 as? KktError, .kakaoInUse)
@@ -680,7 +681,7 @@ extension SendTests {
         dependencies.myUserId = { Fixture.me }
         dependencies.wait = { try interval.waitIfNeeded() }
         dependencies.record = { try interval.record() }
-        dependencies.send = { _, _, _ in events.append(Fixture.sendEvent) }
+        dependencies.send = { _, _, _ in events.append(Fixture.sendEvent); return nil }
         dependencies.verify = { _, _, _, _, _ in .sent(logId: Fixture.next) }
         let operation = SendOperation(dependencies: dependencies)
         _ = try operation.execute(chatId: Fixture.chatId, text: Fixture.text, images: [], dryRun: false)
@@ -1142,7 +1143,7 @@ extension ImageSendSafetyTests {
             var closed = false
             var closeTimes: [Date] = []
             var dependencies = ui.operationDependencies()
-            dependencies.send = { _, _, _ in }
+            dependencies.send = { _, _, _ in nil }
             dependencies.verify = { _, _, _, _, _ in .sent(logId: Fixture.next) }
             dependencies.children = { element in
                 if CFEqual(element, ui.window) { return ui.warning ? [ui.sheet] : [] }
@@ -1180,7 +1181,7 @@ extension ImageSendSafetyTests {
         for images in [[Fixture.image], []] {
             let ui = UI()
             var dependencies = ui.operationDependencies()
-            dependencies.send = { _, _, _ in }
+            dependencies.send = { _, _, _ in nil }
             var verified = false
             dependencies.verify = { _, start, me, text, timeout in
                 verified = true
