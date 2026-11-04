@@ -115,3 +115,20 @@ final class DatabaseTests: XCTestCase {
         try body(path)
     }
 }
+
+final class VersionTests: XCTestCase {
+    private enum Fixture {
+        static let changelogPath = "../../../CHANGELOG.md"
+        static let releaseHeading = "## v"
+        static let headingEnd = " "
+    }
+
+    func testVersionMatchesTheLatestReleaseInTheChangelog() throws {
+        let changelog = URL(fileURLWithPath: #filePath).appendingPathComponent(Fixture.changelogPath).standardizedFileURL
+        let lines = try String(contentsOf: changelog, encoding: .utf8).components(separatedBy: .newlines)
+        let heading = try XCTUnwrap(lines.first { $0.hasPrefix(Fixture.releaseHeading) })
+        let released = heading.dropFirst(Fixture.releaseHeading.count).prefix { String($0) != Fixture.headingEnd }
+
+        XCTAssertEqual(KktConstants.version, String(released))
+    }
+}
