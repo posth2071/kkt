@@ -115,7 +115,7 @@ let status = loop.run(since: nil)
 
 `since: nil`이면 시작 시점의 최대 logId 이후부터 읽습니다. 저장한 커서를 주면 그 이후를 읽습니다. `run`은 동기·차단 방식이며 중단 조건을 확인해 종료코드를 반환합니다. `shouldContinue`는 기본값이 항상 `true`이므로 서비스 종료 조건을 직접 연결하세요. 이 조건은 반복 경계에서 검사하며 진행 중인 대기를 즉시 취소하지 않습니다.
 
-`KktEvent`는 `Encodable`이며 `.message(...)`, `.heartbeat(maxLogId:)`, `.error(reason:)`, `.scrap(logId:chatId:attachment:)`로 만들 수 있습니다. `ServeCursor`는 메시지 이벤트를 기준으로 커서를 전진시킵니다. NDJSON 필드·재시도·미리보기 동작은 [README 출력 계약](../README.md#기계-출력-계약)을 따릅니다. ID는 `Int64`로 유지하세요.
+`KktEvent`는 `Encodable`이며 `.message(...)`, `.heartbeat(maxLogId:)`, `.error(reason:)`, `.scrap(logId:chatId:attachment:)`로 만들 수 있습니다. `ServeCursor`는 메시지 이벤트를 기준으로 커서를 전진시킵니다. NDJSON 필드·재시도·미리보기 동작은 [출력 계약](reference.md#기계-출력-계약)을 따릅니다. ID는 `Int64`로 유지하세요.
 
 ## 글·사진 전송과 방 열기
 
@@ -141,6 +141,8 @@ do {
 `SendVerifier`는 본인 사용자 ID·시작 logId·정규화한 본문을 기준으로 전송을 확인합니다. 결과가 `uncertain`이면 이미 전송했을 수 있어 즉시 재시도하지 마세요. 저수준 `MessageInput`·`ImagePaste`를 직접 사용하면 전송 확인과 창 정리를 호출자가 책임져야 합니다.
 
 사진을 보내면 `KktResult.imageRoute`가 `background` 또는 `foreground`입니다. `MessageInput.send`와 `ImagePaste.send`는 같은 값을 `ImageRoute?`로 반환합니다(사진이 없으면 `nil`). `background`는 비공개 API를 쓰는 `SkyLightFocus` 경로이고, 심볼이 없거나 시트가 뜨지 않으면 `foreground`로 전환합니다. 사용 가능 여부는 `SkyLightFocus.isAvailable()`로 확인합니다.
+
+`ChatOpener`는 최소화되거나 닫힌 메인 창을 표시합니다. 작업 뒤 시작 전 상태로 되돌리려면 `MainWindowKeeper().preserving { ... }`로 감싸세요. CLI 명령은 이미 이렇게 합니다.
 
 `execute(..., viaCard: CardRoute(roomChatId:userId:nickname:))`로 프로필 카드 폴백을 선택할 수 있습니다. 기본값은 `nil`이며 기존 검색 경로를 유지합니다. 직접방의 대상 해석 또는 창 열기에서 `ambiguous_name`·`not_found`가 발생한 경우에만 사용하며, `database.directChatId(userId:)`가 요청한 `chatId`와 같아야 합니다. `roomChatId`는 카드가 게시된 오픈채팅방, `nickname`은 카드에 표시된 이름입니다.
 
@@ -241,7 +243,7 @@ let diagnosticExitCode = report.exitCode
 
 `DoctorChecks.Probes`의 공개 이니셜라이저에 파일 접근·권한·SQLCipher·DB 키·프로세스·버전·AX 스냅샷·잠금·전면 여부 클로저를 전달할 수도 있습니다. `DoctorCheck`는 `id`, `status`(`ok`/`warn`/`fail`), `detail`, 선택 `fix`를 갖습니다. `DoctorReport.exitCode`는 `fail`이 있으면 `1`입니다. `AXIdentifierTable.Snapshot`과 `AXIdentifierTable.missing(in:)`은 관찰한 AX 요소와 기준표를 비교합니다. 현재 보이지 않는 화면까지 검사하지는 않습니다.
 
-`KktError.code`는 [README의 reason 코드](../README.md#reason-코드)에 대응합니다. 연관 값이 있는 `.automation(String)`의 `.code`는 일반 `automation_failed`입니다. `contact`의 세부 오류 코드를 보존하려면 `ContactFlow.failureReason(_:)`를 사용합니다. `KktOutput.line(_:)`은 JSON 문자열, `emit(_:)`과 `emitLine(_:)`은 표준출력을 제공합니다.
+`KktError.code`는 [reason 코드](reference.md#reason-코드)에 대응합니다. 연관 값이 있는 `.automation(String)`의 `.code`는 일반 `automation_failed`입니다. `contact`의 세부 오류 코드를 보존하려면 `ContactFlow.failureReason(_:)`를 사용합니다. `KktOutput.line(_:)`은 JSON 문자열, `emit(_:)`과 `emitLine(_:)`은 표준출력을 제공합니다.
 
 ## 스레드와 잠금
 
