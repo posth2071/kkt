@@ -491,3 +491,79 @@ final class UniqueRowTests: XCTestCase {
     }
 }
 
+
+final class FocusRestoreTests: XCTestCase {
+    private enum Fixture {
+        static let previous = "com.example.previous"
+        static let other = "com.example.other"
+        static let cursor = CGPoint(x: 10, y: 20)
+        static let activationDelay: TimeInterval = 1.2
+        static let activationLimit: TimeInterval = 2
+    }
+
+    private final class Recorder {
+        var commands: [[String]] = []
+        var cursors: [CGPoint] = []
+    }
+
+    private func focusGuard(current: String?, recorder: Recorder, restoresCursor: Bool = false) -> FocusGuard {
+        FocusGuard(restoresCursor: restoresCursor, captureApplication: { Fixture.previous },
+                   captureCursor: { Fixture.cursor }, currentApplication: { current },
+                   run: { recorder.commands.append([$0] + $1) }, restoreCursor: { recorder.cursors.append($0) })
+    }
+
+    func testReturnsToPreviousAppWhenKakaoTalkIsFrontmost() {
+        let recorder = Recorder()
+        focusGuard(current: KakaoApp.bundleId, recorder: recorder).restore()
+        let command = FocusGuard.restoreCommand(bundleId: Fixture.previous)
+        XCTAssertEqual(recorder.commands, [[command.path] + command.args])
+    }
+
+    func testLeavesTheAppTheUserMovedToAlone() {
+        let recorder = Recorder()
+        focusGuard(current: Fixture.other, recorder: recorder).restore()
+        XCTAssertTrue(recorder.commands.isEmpty)
+    }
+
+    func testDoesNotReopenAnAppThatIsAlreadyFrontmost() {
+        let recorder = Recorder()
+        focusGuard(current: Fixture.previous, recorder: recorder).restore()
+        XCTAssertTrue(recorder.commands.isEmpty)
+    }
+
+    func testUnknownFrontmostAppIsLeftAlone() {
+        let recorder = Recorder()
+        focusGuard(current: nil, recorder: recorder).restore()
+        XCTAssertTrue(recorder.commands.isEmpty)
+    }
+
+    func testCursorIsRestoredEvenWhenTheAppIsLeftAlone() {
+        let recorder = Recorder()
+        focusGuard(current: Fixture.other, recorder: recorder, restoresCursor: true).restore()
+        XCTAssertEqual(recorder.cursors, [Fixture.cursor])
+    }
+
+    private func reopen(activatesAfter delay: TimeInterval?) throws -> (restoredAt: TimeInterval?, count: Int) {
+        var now = Date(timeIntervalSince1970: .zero)
+        let start = now
+        var opened = false, restoredAt: TimeInterval?, count = 0
+        _ = try MainWindowReopener.find(
+            windows: { opened ? [true] : [] }, isMainWindow: { $0 }, reopen: { opened = true },
+            sleep: { now.addTimeInterval($0) }, clock: { now },
+            restoreFocus: { count += 1; restoredAt = restoredAt ?? now.timeIntervalSince(start) },
+            selfActivated: { delay.map { now.timeIntervalSince(start) >= $0 } ?? false })
+        return (restoredAt, count)
+    }
+
+    func testReopenWaitsForKakaoTalkToActivateItselfBeforeRestoring() throws {
+        let result = try reopen(activatesAfter: Fixture.activationDelay)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(result.restoredAt), Fixture.activationDelay)
+        XCTAssertLessThan(try XCTUnwrap(result.restoredAt), Fixture.activationLimit)
+    }
+
+    func testReopenStopsWaitingWhenKakaoTalkNeverActivates() throws {
+        let result = try reopen(activatesAfter: nil)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(result.restoredAt), Fixture.activationLimit)
+        XCTAssertEqual(result.count, 1)
+    }
+}

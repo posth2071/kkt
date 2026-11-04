@@ -4,6 +4,7 @@ import CoreGraphics
 public final class FocusGuard {
     private let previousBundleId: String?
     private let mouseLocation: CGPoint?
+    private let currentApplication: () -> String?
     private let run: (String, [String]) -> Void
     private let restoreCursor: (CGPoint) -> Void
 
@@ -11,6 +12,7 @@ public final class FocusGuard {
         restoresCursor: Bool = false,
         captureApplication: () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier },
         captureCursor: () -> CGPoint? = { CGEvent(source: nil)?.location },
+        currentApplication: @escaping () -> String? = KakaoApp.frontmostBundleId,
         run: @escaping (String, [String]) -> Void = { path, arguments in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: path)
@@ -23,13 +25,14 @@ public final class FocusGuard {
     ) {
         previousBundleId = captureApplication()
         mouseLocation = restoresCursor ? captureCursor() : nil
+        self.currentApplication = currentApplication
         self.run = run
         self.restoreCursor = restoreCursor
     }
 
     public func restore() {
         if let previousBundleId,
-           Self.shouldRestore(previousBundleId: previousBundleId, currentBundleId: KakaoApp.bundleId) {
+           Self.shouldRestore(previousBundleId: previousBundleId, currentBundleId: currentApplication()) {
             let command = Self.restoreCommand(bundleId: previousBundleId)
             run(command.path, command.args)
         }

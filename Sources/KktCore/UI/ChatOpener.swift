@@ -102,7 +102,8 @@ public final class ChatOpener {
             windows: { dependencies.windows(app) },
             isMainWindow: { dependencies.identifier($0) == KktConstants.mainWindowIdentifier },
             reopen: dependencies.reopen, sleep: dependencies.sleep, clock: dependencies.clock,
-            restoreFocus: restoreFocus)
+            restoreFocus: restoreFocus,
+            selfActivated: { dependencies.frontmostBundleId() == KakaoApp.bundleId })
         try checkWindows(windows)
         return (app, mainWindow)
     }

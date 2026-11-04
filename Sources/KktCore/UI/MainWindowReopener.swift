@@ -3,7 +3,8 @@ import Foundation
 enum MainWindowReopener {
     static func find<Window>(
         windows: () -> [Window], isMainWindow: (Window) -> Bool, reopen: () throws -> Void,
-        sleep: (TimeInterval) -> Void, clock: () -> Date, restoreFocus: () -> Void
+        sleep: (TimeInterval) -> Void, clock: () -> Date, restoreFocus: () -> Void,
+        selfActivated: () -> Bool = { true }
     ) throws -> (mainWindow: Window, windows: [Window]) {
         let current = windows()
         if let mainWindow = current.first(where: isMainWindow) { return (mainWindow, current) }
@@ -13,6 +14,8 @@ enum MainWindowReopener {
             repeat {
                 let reopened = windows()
                 if let mainWindow = reopened.first(where: isMainWindow) {
+                    let activationDeadline = clock().addingTimeInterval(KktConstants.mainWindowActivationWait)
+                    while !selfActivated(), clock() < activationDeadline { sleep(KktConstants.mainWindowPoll) }
                     restoreFocus()
                     sleep(KktConstants.actionSettle)
                     return (mainWindow, reopened)

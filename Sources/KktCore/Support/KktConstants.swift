@@ -173,6 +173,7 @@ public enum KktConstants {
     static let mainWindowBackgroundArgument = "-g"
     static let mainWindowPoll = 0.1
     static let mainWindowReopenTimeout = 5.0
+    static let mainWindowActivationWait: TimeInterval = 2
     static let returnKeyCode: CGKeyCode = 36
     static let unicodeKeyCode: CGKeyCode = 0
     static let typeInterval = 0.03
