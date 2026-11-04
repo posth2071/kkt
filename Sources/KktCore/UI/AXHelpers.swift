@@ -62,6 +62,26 @@ public enum AXHelpers {
         AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success
     }
 
+    public static func isMinimized(_ window: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &value) == .success else { return false }
+        return value as? Bool == true
+    }
+
+    public static func minimize(_ window: AXUIElement) -> Bool {
+        AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
+    }
+
+    static func pressMainWindowMenu(_ app: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return false }
+        let bar = unsafeDowncast(value, to: AXUIElement.self)
+        let entries = children(bar).filter { title($0) == KktConstants.AX.windowMenu }.flatMap(children).flatMap(children)
+        guard let item = entries.first(where: { title($0) == KktConstants.AX.chatsMenuItem }) else { return false }
+        return performAction(item, kAXPressAction as String)
+    }
+
     public static func closeWindow(_ window: AXUIElement) -> Bool {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &value) == .success,

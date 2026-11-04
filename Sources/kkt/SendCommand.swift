@@ -41,8 +41,9 @@ struct SendCommand: ParsableCommand {
             let reader = try KakaoDatabase.open(config: config)
             defer { reader.close() }
             let operation = SendOperation(reader: reader, interval: SendInterval(path: config.lockPath))
-            KktOutput.emit(try operation.execute(chatId: chatId, text: text, images: images,
-                                                 dryRun: dryRun, viaCard: cardRoute))
+            KktOutput.emit(try MainWindowKeeper().preserving {
+                try operation.execute(chatId: chatId, text: text, images: images, dryRun: dryRun, viaCard: cardRoute)
+            })
         } catch {
             KktOutput.emit(KktResult(result: KktConstants.failedResult,
                 reason: cardRoute == nil ? (error as? KktError)?.code ?? KktConstants.automationCode

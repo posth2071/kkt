@@ -174,6 +174,7 @@ public enum KktConstants {
     static let mainWindowPoll = 0.1
     static let mainWindowReopenTimeout = 5.0
     static let mainWindowActivationWait: TimeInterval = 2
+    static let mainWindowMenuTimeout: TimeInterval = 2
     static let returnKeyCode: CGKeyCode = 36
     static let unicodeKeyCode: CGKeyCode = 0
     static let typeInterval = 0.03
@@ -372,6 +373,8 @@ public enum KktConstants {
     static let captureFileExtension = ".png"
 
     enum AX {
+        static let windowMenu = "창"
+        static let chatsMenuItem = "채팅"
         static let bundleId = "com.kakao.KakaoTalkMac"
         static let cell = "AXCell"
         static let button = "AXButton"

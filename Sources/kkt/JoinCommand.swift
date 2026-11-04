@@ -25,7 +25,7 @@ struct JoinCommand: ParsableCommand {
             let lock = KktLock(path: config.lockPath)
             defer { lock.release() }
             try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
-            result = try execute(config: config)
+            result = try MainWindowKeeper().preserving { try execute(config: config) }
         } catch {
             result = KktResult(result: KktConstants.failedResult,
                 reason: (error as? KktError)?.code ?? KktConstants.automationCode)

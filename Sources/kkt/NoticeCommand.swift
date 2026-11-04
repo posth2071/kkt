@@ -44,7 +44,7 @@ struct NoticeCommand: ParsableCommand {
                 try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
                 defer { lock.release() }
                 let target = try ReadQueries.retry { try NoticeReader.screenTarget(database: database, chatId: chatId) }
-                return try NoticeAX().read(target)
+                return try MainWindowKeeper().preserving { try NoticeAX().read(target) }
             })
             let result = try reader.read(chatId: id)
             if json { KktOutput.emit(result) }

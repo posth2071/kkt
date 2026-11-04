@@ -10,6 +10,8 @@ public final class ChatOpener {
         var windows: (AXUIElement) -> [AXUIElement] = AXHelpers.windows
         var identifier: (AXUIElement) -> String? = AXHelpers.identifier
         var title: (AXUIElement) -> String? = AXHelpers.title
+        var isMinimized: (AXUIElement) -> Bool = AXHelpers.isMinimized
+        var showMainWindow: (AXUIElement) -> Bool = AXHelpers.pressMainWindowMenu
         var captureFocus: () -> (() -> Void) = {
             let guard_ = FocusGuard()
             return { guard_.restore() }
@@ -98,14 +100,31 @@ public final class ChatOpener {
     private func prepareWindows(pid: pid_t, restoreFocus: () -> Void) throws
         -> (app: AXUIElement, mainWindow: AXUIElement) {
         let app = dependencies.appElement(pid)
+        showHiddenMainWindow(app: app)
         let (mainWindow, windows) = try MainWindowReopener.find(
             windows: { dependencies.windows(app) },
-            isMainWindow: { dependencies.identifier($0) == KktConstants.mainWindowIdentifier },
+            isMainWindow: isVisibleMainWindow,
             reopen: dependencies.reopen, sleep: dependencies.sleep, clock: dependencies.clock,
             restoreFocus: restoreFocus,
             selfActivated: { dependencies.frontmostBundleId() == KakaoApp.bundleId })
         try checkWindows(windows)
         return (app, mainWindow)
+    }
+
+    private func isVisibleMainWindow(_ window: AXUIElement) -> Bool {
+        dependencies.identifier(window) == KktConstants.mainWindowIdentifier && !dependencies.isMinimized(window)
+    }
+
+    private func visibleMainWindow(app: AXUIElement) -> AXUIElement? {
+        dependencies.windows(app).first(where: isVisibleMainWindow)
+    }
+
+    private func showHiddenMainWindow(app: AXUIElement) {
+        guard visibleMainWindow(app: app) == nil, dependencies.showMainWindow(app) else { return }
+        let deadline = dependencies.clock().addingTimeInterval(KktConstants.mainWindowMenuTimeout)
+        while visibleMainWindow(app: app) == nil, dependencies.clock() < deadline {
+            dependencies.sleep(KktConstants.mainWindowPoll)
+        }
     }
 
     private func checkWindows(_ windows: [AXUIElement]) throws {
