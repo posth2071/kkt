@@ -15,6 +15,15 @@ final class ProgressTests: XCTestCase {
         static let termKey = "TERM"
         static let dumbTerm = "dumb"
         static let normalTerm = "xterm-256color"
+        static let noColorKey = "NO_COLOR"
+        static let elapsed: TimeInterval = 3.2
+        static let zeroElapsed = "0.0초"
+        static let elapsedText = "3.2초"
+        static let gap = "  "
+        static let cyan = "\u{1B}[36m"
+        static let bold = "\u{1B}[1m"
+        static let dim = "\u{1B}[2m"
+        static let reset = "\u{1B}[0m"
         static let realDelay: TimeInterval = 0.01
         static let realTimeout: TimeInterval = 2
     }
@@ -24,24 +33,30 @@ final class ProgressTests: XCTestCase {
         private var storedWrites: [String] = []
         private var storedTick: (@Sendable () -> Void)?
         private var storedCancels = 0
+        private var storedNow = Date(timeIntervalSince1970: .zero)
 
         var writes: [String] { lock.withLock { storedWrites } }
         var cancels: Int { lock.withLock { storedCancels } }
         var scheduled: Bool { lock.withLock { storedTick != nil } }
 
-        func indicator(enabled: Bool = true) -> ProgressIndicator {
-            ProgressIndicator(enabled: enabled, write: { [self] text in
+        func indicator(enabled: Bool = true, colored: Bool = false) -> ProgressIndicator {
+            ProgressIndicator(enabled: enabled, colored: colored, write: { [self] text in
                 lock.withLock { storedWrites.append(text) }
             }, schedule: { [self] tick in
                 lock.withLock { storedTick = tick }
                 return { [self] in lock.withLock { storedCancels += 1 } }
-            })
+            }, now: { [self] in lock.withLock { storedNow } })
         }
 
         func tick() { lock.withLock { storedTick }?() }
+        func advance(_ seconds: TimeInterval) { lock.withLock { storedNow.addTimeInterval(seconds) } }
     }
 
     private struct Failure: Error {}
+
+    private func line(_ frame: String, _ label: String, _ elapsed: String = Fixture.zeroElapsed) -> String {
+        Fixture.clearLine + frame + " " + label + Fixture.gap + elapsed
+    }
 
     func testShowsOnlyOnATerminalWithoutOptOut() {
         let normal = [Fixture.termKey: Fixture.normalTerm]
@@ -90,10 +105,7 @@ final class ProgressTests: XCTestCase {
         harness.tick()
         harness.tick()
 
-        XCTAssertEqual(harness.writes, [
-            Fixture.clearLine + Fixture.firstFrame + " " + Fixture.label,
-            Fixture.clearLine + Fixture.secondFrame + " " + Fixture.label,
-        ])
+        XCTAssertEqual(harness.writes, [line(Fixture.firstFrame, Fixture.label), line(Fixture.secondFrame, Fixture.label)])
     }
 
     func testVisibleIndicatorRedrawsAtOnceWhenTheStageChanges() {
@@ -104,8 +116,7 @@ final class ProgressTests: XCTestCase {
         harness.tick()
         indicator.update(.verifying)
 
-        XCTAssertEqual(harness.writes.last,
-                       Fixture.clearLine + Fixture.firstFrame + " " + ProgressStage.verifying.label)
+        XCTAssertEqual(harness.writes.last, line(Fixture.firstFrame, ProgressStage.verifying.label))
     }
 
     func testStopClearsTheLineAndIgnoresALateTick() {
@@ -154,7 +165,53 @@ final class ProgressTests: XCTestCase {
         indicator.update(.readingNotice)
         harness.tick()
 
-        XCTAssertEqual(harness.writes, [Fixture.clearLine + Fixture.firstFrame + " " + ProgressStage.readingNotice.label])
+        XCTAssertEqual(harness.writes, [line(Fixture.firstFrame, ProgressStage.readingNotice.label)])
+    }
+
+    func testElapsedTimeCountsFromTheFirstStage() {
+        let harness = Harness()
+        let indicator = harness.indicator()
+
+        indicator.update(.openingRoom)
+        harness.advance(Fixture.elapsed)
+        indicator.update(.verifying)
+        harness.tick()
+
+        XCTAssertEqual(harness.writes, [line(Fixture.firstFrame, ProgressStage.verifying.label, Fixture.elapsedText)])
+    }
+
+    func testElapsedTimeRestartsAfterStopping() {
+        let harness = Harness()
+        let indicator = harness.indicator()
+
+        indicator.during(.readingNotice) { harness.advance(Fixture.elapsed) }
+        indicator.update(.readingNotice)
+        harness.tick()
+
+        XCTAssertEqual(harness.writes, [line(Fixture.firstFrame, ProgressStage.readingNotice.label)])
+    }
+
+    func testColoredLineStylesEachPart() {
+        let harness = Harness()
+        let indicator = harness.indicator(colored: true)
+
+        indicator.update(.openingRoom)
+        harness.advance(Fixture.elapsed)
+        harness.tick()
+
+        XCTAssertEqual(harness.writes, [
+            Fixture.clearLine + Fixture.cyan + Fixture.firstFrame + Fixture.reset + " "
+                + Fixture.bold + Fixture.label + Fixture.reset + Fixture.gap
+                + Fixture.dim + Fixture.elapsedText + Fixture.reset,
+        ])
+    }
+
+    func testNoColorTurnsOffStylingOnly() {
+        XCTAssertTrue(ProgressIndicator.isColored(environment: [:]))
+        XCTAssertTrue(ProgressIndicator.isColored(environment: [Fixture.noColorKey: String()]))
+        XCTAssertFalse(ProgressIndicator.isColored(environment: [Fixture.noColorKey: Fixture.disableValue]))
+        XCTAssertTrue(ProgressIndicator.isEnabled(stderrIsTerminal: true,
+                                                  environment: [Fixture.noColorKey: Fixture.disableValue], json: false))
     }
 
     func testImageStageNamesTheCount() {
@@ -164,7 +221,7 @@ final class ProgressTests: XCTestCase {
     func testRealTimerDrawsAfterItsDelay() {
         let drawn = expectation(description: "drawn")
         drawn.assertForOverFulfill = false
-        let indicator = ProgressIndicator(enabled: true, write: { _ in drawn.fulfill() },
+        let indicator = ProgressIndicator(enabled: true, colored: false, write: { _ in drawn.fulfill() },
                                           schedule: ProgressIndicator.timer(delay: Fixture.realDelay,
                                                                             interval: Fixture.realDelay))
 

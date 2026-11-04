@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `send`·`notice`·`join`·`contact`·첫 `auth`가 0.5초 넘게 걸리면 터미널에 진행 단계를 표시. 표준오류가 터미널일 때만 나오고 끝나면 지워지며, 표준출력의 결과는 그대로. `--json`(`notice`), `TERM=dumb`, `KKT_NO_PROGRESS=1`로 끌 수 있음. `SendOperation.execute`에 선택 인자 `progress` 추가.
+- `send`·`notice`·`join`·`contact`·첫 `auth`가 0.5초 넘게 걸리면 터미널에 진행 단계와 경과 시간을 색으로 표시(`NO_COLOR` 지원). 표준오류가 터미널일 때만 나오고 끝나면 지워지며, 표준출력의 결과는 그대로. `--json`(`notice`), `TERM=dumb`, `KKT_NO_PROGRESS=1`로 끌 수 있음. `SendOperation.execute`에 선택 인자 `progress` 추가.
 - `send`에 `--via-card-room`·`--via-card-user`·`--via-card-nickname` 선택 옵션 추가. 1:1 방의 이름 검색 실패 시 기존 프로필 카드 흐름으로 방 열기.
 - 카드 전송 전 직접방 구성원 ID·DB 방 이름·최근 메시지의 AX 본문 대조로 대상 확인. 실패 시 전송 없이 창 정리, 기존 JSON 필드 유지.
 - `send --image`가 비공개 SkyLight API로 카카오톡을 앞으로 꺼내지 않고 사진을 붙여넣도록 변경. 실패하면 기존 전면 경로로 전환하고, 결과에 `imageRoute`(`background`/`foreground`)를 추가. `doctor`에 `image_background` 항목 추가.

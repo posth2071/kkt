@@ -33,25 +33,32 @@ public final class ProgressIndicator: @unchecked Sendable {
     public typealias Cancel = @Sendable () -> Void
 
     private let enabled: Bool
+    private let colored: Bool
     private let write: @Sendable (String) -> Void
     private let schedule: @Sendable (@escaping Tick) -> Cancel
+    private let now: @Sendable () -> Date
     private let lock = NSLock()
     private var label: String?
+    private var startedAt: Date?
     private var frame = Int.zero
     private var visible = false
     private var cancel: Cancel?
 
-    init(enabled: Bool, write: @escaping @Sendable (String) -> Void,
-         schedule: @escaping @Sendable (@escaping Tick) -> Cancel) {
+    init(enabled: Bool, colored: Bool, write: @escaping @Sendable (String) -> Void,
+         schedule: @escaping @Sendable (@escaping Tick) -> Cancel,
+         now: @escaping @Sendable () -> Date = { Date() }) {
         self.enabled = enabled
+        self.colored = colored
         self.write = write
         self.schedule = schedule
+        self.now = now
     }
 
     public static func forTerminal(json: Bool = false,
                                    environment: [String: String] = ProcessInfo.processInfo.environment) -> ProgressIndicator {
         let terminal = isatty(STDERR_FILENO) == KktConstants.Progress.isTerminal
         return ProgressIndicator(enabled: isEnabled(stderrIsTerminal: terminal, environment: environment, json: json),
+                                 colored: isColored(environment: environment),
                                  write: { FileHandle.standardError.write(Data($0.utf8)) },
                                  schedule: timer(delay: KktConstants.Progress.firstDrawDelay,
                                                  interval: KktConstants.Progress.frameInterval))
@@ -61,6 +68,10 @@ public final class ProgressIndicator: @unchecked Sendable {
         stderrIsTerminal && !json
             && environment[KktConstants.Progress.termKey] != KktConstants.Progress.dumbTerm
             && environment[KktConstants.Progress.disableKey]?.isEmpty != false
+    }
+
+    static func isColored(environment: [String: String]) -> Bool {
+        environment[KktConstants.Progress.noColorKey]?.isEmpty != false
     }
 
     static func timer(delay: TimeInterval, interval: TimeInterval) -> @Sendable (@escaping Tick) -> Cancel {
@@ -77,6 +88,7 @@ public final class ProgressIndicator: @unchecked Sendable {
         guard enabled else { return }
         lock.withLock {
             label = stage.label
+            if startedAt == nil { startedAt = now() }
             if visible { draw() }
             guard cancel == nil else { return }
             cancel = schedule { [weak self] in self?.tick() }
@@ -89,6 +101,7 @@ public final class ProgressIndicator: @unchecked Sendable {
             cancel?()
             cancel = nil
             label = nil
+            startedAt = nil
             frame = .zero
             if visible { write(KktConstants.Progress.clearLine) }
             visible = false
@@ -111,9 +124,16 @@ public final class ProgressIndicator: @unchecked Sendable {
     }
 
     private func draw() {
-        guard let label else { return }
-        write(KktConstants.Progress.clearLine + KktConstants.Progress.frames[frame]
-            + KktConstants.Progress.separator + label)
+        guard let label, let startedAt else { return }
+        let seconds = String(format: KktConstants.Progress.elapsedFormat, now().timeIntervalSince(startedAt))
+        write(KktConstants.Progress.clearLine
+            + styled(KktConstants.Progress.frames[frame], KktConstants.Progress.spinnerStyle)
+            + KktConstants.Progress.separator + styled(label, KktConstants.Progress.labelStyle)
+            + KktConstants.Progress.elapsedGap + styled(seconds, KktConstants.Progress.elapsedStyle))
+    }
+
+    private func styled(_ text: String, _ style: String) -> String {
+        colored ? style + text + KktConstants.Progress.resetStyle : text
     }
 }
 
@@ -131,6 +151,12 @@ extension KktConstants {
         static let checkingAccount = "계정 확인 중…"
         static let clearLine = "\r\u{1B}[2K"
         static let separator = " "
+        static let elapsedGap = "  "
+        static let elapsedFormat = "%.1f초"
+        static let spinnerStyle = "\u{1B}[36m"
+        static let labelStyle = "\u{1B}[1m"
+        static let elapsedStyle = "\u{1B}[2m"
+        static let resetStyle = "\u{1B}[0m"
         static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         static let frameStep = 1
         static let firstDrawDelay: TimeInterval = 0.5
@@ -139,6 +165,7 @@ extension KktConstants {
         static let termKey = "TERM"
         static let dumbTerm = "dumb"
         static let disableKey = "KKT_NO_PROGRESS"
+        static let noColorKey = "NO_COLOR"
         static let queueLabel = "kkt.progress"
     }
 }
