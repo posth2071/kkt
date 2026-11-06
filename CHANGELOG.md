@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `notice`가 490자 미만 공지도 화면에서 읽도록 수정. 공지를 수정해도 DB 행이 갱신되지 않아 예전 내용이 나오던 문제 해결. 이제 호출마다 방을 열고 카카오톡이 잠깐 앞으로 오며, 화면을 읽지 못하면 DB 본문을 `source: "truncated"`, `truncated: true`로 반환. `NoticeReader.read`는 `source: "database"`를 반환하지 않음.
+
 ## v0.2.0 — 2026-11-05
 
 - `kkt --version` 추가. 터미널에서는 카카오톡·macOS 버전과 실행 파일 경로를 함께 표시하고, 파이프에서는 이름과 버전 한 줄만 출력.

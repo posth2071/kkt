@@ -15,22 +15,35 @@ final class NoticeTests: XCTestCase {
         static var target: SendTarget { .group(name: "미션방") }
     }
 
-    func testDatabaseNoticePreferred() throws {
+    func testShortNoticeUsesCurrentScreenText() throws {
         var uiCalls = Int.zero
         let reader = NoticeReader(fetch: { chatId in
             XCTAssertEqual(chatId, Fixture.chatId)
             return self.notice(Fixture.shortText)
         }, screen: { _ in uiCalls += 1; return Fixture.fullText })
         let result = try reader.read(chatId: Fixture.chatId)
-        XCTAssertEqual(result.text, Fixture.shortText)
-        XCTAssertEqual(result.source, "database")
+        XCTAssertEqual(result.text, Fixture.fullText)
+        XCTAssertEqual(result.source, "screen")
         XCTAssertFalse(result.truncated)
         XCTAssertEqual(result.updatedAt, Fixture.updatedAt)
-        XCTAssertEqual(uiCalls, 0)
+        XCTAssertEqual(uiCalls, 1)
     }
 
-    func testFallsBackToScreenWhenDatabaseTruncated() throws {
-        for text in [Fixture.boundaryText, Fixture.preview] {
+    func testShortNoticeIsMarkedUnverifiedWhenScreenFails() throws {
+        let screens: [(Int64) throws -> String?] = [{ _ in nil }, { _ in "" }, { _ in throw KktError.chatWindowOpen }]
+        for screen in screens {
+            let reader = NoticeReader(fetch: { _ in self.notice(Fixture.shortText) }, screen: screen)
+            let result = try reader.read(chatId: Fixture.chatId)
+            XCTAssertEqual(result.text, Fixture.shortText)
+            XCTAssertEqual(result.source, "truncated")
+            XCTAssertTrue(result.truncated)
+            XCTAssertEqual(result.updatedAt, Fixture.updatedAt)
+            XCTAssertEqual(result.exitCode, 0)
+        }
+    }
+
+    func testEveryNoticeLengthReadsScreen() throws {
+        for text in [Fixture.shortText, Fixture.boundaryText, Fixture.preview] {
             let effects = ScreenEffects()
             let reader = NoticeReader(fetch: { _ in self.notice(text) }, screen: { chatId in
                 XCTAssertEqual(chatId, Fixture.chatId)
@@ -46,15 +59,6 @@ final class NoticeTests: XCTestCase {
                                            "restore", "close(board)", "close(room)"])
             XCTAssertEqual(result.exitCode, 0)
         }
-    }
-
-    func testCrlfPreviewCountsUtf16Units() throws {
-        let crlfPreview = String(repeating: "가\r\n", count: 167)
-        XCTAssertLessThan(crlfPreview.count, KktConstants.Notice.truncationThreshold)
-        let reader = NoticeReader(fetch: { _ in self.notice(crlfPreview) }, screen: { _ in throw KktError.chatWindowOpen })
-        let result = try reader.read(chatId: Fixture.chatId)
-        XCTAssertTrue(result.truncated)
-        XCTAssertEqual(result.source, "truncated")
     }
 
     func testTruncatedWhenScreenUnavailable() throws {

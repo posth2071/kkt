@@ -213,7 +213,7 @@ do {
 
 ## 공지 읽기
 
-`NoticeReader(fetch:screen:)`는 DB 우선·긴 미리보기와 삭제 표시 공지, 공지 행이 없는 방의 화면 보완·잘린 결과 반환 정책입니다. `NoticeResult`는 `chatId`, `text`, `source`, `truncated`, `updatedAt`, `messageDeleted`를 제공합니다. `messageDeleted`는 `databaseNotice`가 읽은 행의 삭제 표시이며 JSON 출력에는 포함되지 않습니다. 화면 접근 잠금은 `screen` 클로저에서만 잡을 수 있습니다.
+`NoticeReader(fetch:screen:)`는 화면 본문을 먼저 읽고, 실패하면 DB 본문을 미확인 결과로 돌려주는 정책입니다. `fetch`의 DB 본문을 그대로 반환하지 않습니다. `NoticeResult`는 `chatId`, `text`, `source`, `truncated`, `updatedAt`, `messageDeleted`를 제공합니다. `messageDeleted`는 `databaseNotice`가 읽은 행의 삭제 표시이며 JSON 출력에는 포함되지 않습니다. 화면 접근 잠금은 `screen` 클로저에서만 잡을 수 있습니다.
 
 ```swift
 let noticeReader = NoticeReader(fetch: { id in

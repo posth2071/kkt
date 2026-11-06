@@ -41,10 +41,7 @@ public struct NoticeReader {
 
     public func read(chatId: Int64) throws -> NoticeResult {
         guard let notice = try fetch(chatId) else { return try readWithoutRow(chatId: chatId) }
-        // KakaoTalk caps the stored preview at 500 UTF-16 units (measured); Swift Characters merge "\r\n" and undercount.
-        guard notice.messageDeleted || notice.text.utf16.count >= KktConstants.Notice.truncationThreshold else {
-            return notice
-        }
+        // Edited notices keep their old local row at any length, so the row only serves as the fallback.
         if let text = try? screen(chatId), !text.isEmpty {
             return NoticeResult(chatId: chatId, text: text, source: KktConstants.Notice.screen,
                                 truncated: false, updatedAt: notice.updatedAt)
@@ -98,7 +95,6 @@ extension KktConstants {
         public static let truncated = "truncated"
         public static let heading = "chatId / source / truncated / updatedAt"
         public static let separator = " / "
-        static let truncationThreshold = 490
         static let unknownUpdatedAt: Int64 = 0
         static let objectsKey = "os"
         static let typeKey = "t"
