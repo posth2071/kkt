@@ -12,6 +12,7 @@ public struct SkyLightFocus {
     private typealias PostRecord = @convention(c) (UnsafeMutablePointer<UInt32>, UnsafeMutablePointer<UInt8>) -> Int32
     private typealias WindowLookup = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
     private typealias SerialLookup = @convention(c) (pid_t, UnsafeMutablePointer<UInt32>) -> Int32
+    private typealias SetFront = @convention(c) (UnsafeMutablePointer<UInt32>, UInt32, UInt32) -> Int32
 
     private let api: API?
     private let pid: (AXUIElement) -> pid_t?
@@ -31,6 +32,19 @@ public struct SkyLightFocus {
     }
 
     public static func isAvailable() -> Bool { liveAPI() != nil }
+
+    // NSRunningApplication.activate() reports success for a bundle-less app but leaves it behind (measured).
+    @discardableResult
+    public static func bringToFront(pid: pid_t) -> Bool {
+        typealias C = KktConstants.SkyLight
+        let process = UnsafeMutableRawPointer(bitPattern: C.defaultHandle)
+        guard let framework = dlopen(C.frameworkPath, RTLD_LAZY),
+              let frontSymbol = dlsym(framework, C.frontSymbol),
+              let serialSymbol = dlsym(process, C.serialSymbol) else { return false }
+        var serial = [UInt32](repeating: .zero, count: C.serialWords)
+        guard unsafeBitCast(serialSymbol, to: SerialLookup.self)(pid, &serial) == .zero else { return false }
+        return unsafeBitCast(frontSymbol, to: SetFront.self)(&serial, .zero, C.userGeneratedFront) == .zero
+    }
 
     public func acquire(window: AXUIElement) -> (() -> Void)? {
         guard let api, let pid = pid(window), let windowId = api.windowId(window),
@@ -98,6 +112,8 @@ public struct SkyLightFocus {
 extension KktConstants {
     enum SkyLight {
         static let frameworkPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
+        static let frontSymbol = "_SLPSSetFrontProcessWithOptions"
+        static let userGeneratedFront: UInt32 = 0x200
         static let postSymbol = "SLPSPostEventRecordTo"
         static let windowSymbol = "_AXUIElementGetWindow"
         static let serialSymbol = "GetProcessForPID"

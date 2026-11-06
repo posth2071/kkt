@@ -496,6 +496,7 @@ final class FocusRestoreTests: XCTestCase {
     private enum Fixture {
         static let previous = "com.example.previous"
         static let other = "com.example.other"
+        static let bundlelessPid: pid_t = 4242
         static let cursor = CGPoint(x: 10, y: 20)
         static let activationDelay: TimeInterval = 1.2
         static let activationLimit: TimeInterval = 2
@@ -517,6 +518,24 @@ final class FocusRestoreTests: XCTestCase {
         focusGuard(current: KakaoApp.bundleId, recorder: recorder).restore()
         let command = FocusGuard.restoreCommand(bundleId: Fixture.previous)
         XCTAssertEqual(recorder.commands, [[command.path] + command.args])
+    }
+
+    private func bundlelessGuard(current: String?, activated: Recorder) -> FocusGuard {
+        FocusGuard(captureApplication: { nil }, captureProcess: { Fixture.bundlelessPid },
+                   currentApplication: { current }, run: { activated.commands.append([$0] + $1) },
+                   activate: { activated.commands.append([String($0)]) })
+    }
+
+    func testReturnsToAppWithoutBundleIdByProcess() {
+        let recorder = Recorder()
+        bundlelessGuard(current: KakaoApp.bundleId, activated: recorder).restore()
+        XCTAssertEqual(recorder.commands, [[String(Fixture.bundlelessPid)]])
+    }
+
+    func testLeavesFocusAloneWhenAppWithoutBundleIdIsStillFrontmost() {
+        let recorder = Recorder()
+        bundlelessGuard(current: nil, activated: recorder).restore()
+        XCTAssertTrue(recorder.commands.isEmpty)
     }
 
     func testLeavesTheAppTheUserMovedToAlone() {

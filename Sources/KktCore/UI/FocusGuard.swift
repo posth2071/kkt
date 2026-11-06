@@ -3,14 +3,17 @@ import CoreGraphics
 
 public final class FocusGuard {
     private let previousBundleId: String?
+    private let previousProcess: pid_t?
     private let mouseLocation: CGPoint?
     private let currentApplication: () -> String?
     private let run: (String, [String]) -> Void
+    private let activate: (pid_t) -> Void
     private let restoreCursor: (CGPoint) -> Void
 
     public init(
         restoresCursor: Bool = false,
         captureApplication: () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier },
+        captureProcess: () -> pid_t? = { NSWorkspace.shared.frontmostApplication?.processIdentifier },
         captureCursor: () -> CGPoint? = { CGEvent(source: nil)?.location },
         currentApplication: @escaping () -> String? = KakaoApp.frontmostBundleId,
         run: @escaping (String, [String]) -> Void = { path, arguments in
@@ -18,15 +21,18 @@ public final class FocusGuard {
             process.executableURL = URL(fileURLWithPath: path)
             process.arguments = arguments
             if (try? process.run()) != nil { process.waitUntilExit() }
-        }, restoreCursor: @escaping (CGPoint) -> Void = {
+        }, activate: @escaping (pid_t) -> Void = { SkyLightFocus.bringToFront(pid: $0) },
+        restoreCursor: @escaping (CGPoint) -> Void = {
             CGWarpMouseCursorPosition($0)
             CGAssociateMouseAndMouseCursorPosition(KktConstants.associateMouseCursor)
         }
     ) {
         previousBundleId = captureApplication()
+        previousProcess = captureProcess()
         mouseLocation = restoresCursor ? captureCursor() : nil
         self.currentApplication = currentApplication
         self.run = run
+        self.activate = activate
         self.restoreCursor = restoreCursor
     }
 
@@ -35,6 +41,9 @@ public final class FocusGuard {
            Self.shouldRestore(previousBundleId: previousBundleId, currentBundleId: currentApplication()) {
             let command = Self.restoreCommand(bundleId: previousBundleId)
             run(command.path, command.args)
+        } else if previousBundleId == nil, let previousProcess, currentApplication() == KakaoApp.bundleId {
+            // Apps without a bundle, such as the Android emulator, cannot be reopened with `open -b`.
+            activate(previousProcess)
         }
         if let mouseLocation { restoreCursor(mouseLocation) }
     }
