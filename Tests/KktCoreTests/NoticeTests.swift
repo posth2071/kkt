@@ -13,6 +13,9 @@ final class NoticeTests: XCTestCase {
         static let preview = String(repeating: "공", count: 500)
         static let fullText = String(repeating: "공지 전문\n", count: 200)
         static var target: SendTarget { .group(name: "미션방") }
+        static let firstComment = "5   TITO C1 SILVER      https://www.musinsa.com/curator/goods/XOt5tpVC"
+        static let secondComment = "6   EDDY col.1 (BLACK) 3size"
+        static let thirdComment = "7   DOLCE C1 BLACK"
     }
 
     func testShortNoticeUsesCurrentScreenText() throws {
@@ -333,6 +336,50 @@ final class NoticeTests: XCTestCase {
         XCTAssertEqual(effects.events, ["open", "close(room)"])
     }
 
+    func testScreenCollectsCommentsBelowNoticeInOrder() throws {
+        let effects = ScreenEffects()
+        effects.commentRows = [Fixture.firstComment, Fixture.secondComment]
+        let screen = try XCTUnwrap(NoticeAX(dependencies: effects.dependencies()).readScreen(Fixture.target))
+        XCTAssertEqual(screen.text, Fixture.fullText)
+        XCTAssertEqual(screen.comments, [Fixture.firstComment, Fixture.secondComment])
+        XCTAssertEqual(Array(effects.events.suffix(3)), ["restore", "close(board)", "close(room)"])
+    }
+
+    func testScreenScrollsForCommentsBelowTheFoldAndResetsScroll() throws {
+        let effects = ScreenEffects()
+        effects.commentRows = [Fixture.firstComment]
+        effects.scrolledCommentRows = [Fixture.firstComment, Fixture.secondComment, Fixture.thirdComment]
+        effects.hasScrollBar = true
+        let screen = try XCTUnwrap(NoticeAX(dependencies: effects.dependencies()).readScreen(Fixture.target))
+        XCTAssertEqual(screen.comments, [Fixture.firstComment, Fixture.secondComment, Fixture.thirdComment])
+        XCTAssertEqual(effects.scrollValues.last, 0)
+        XCTAssertEqual(effects.scrollValues.max(), 1)
+    }
+
+    func testReadKeepsReturningNoticeTextOnly() throws {
+        let effects = ScreenEffects()
+        effects.commentRows = [Fixture.firstComment]
+        XCTAssertEqual(try NoticeAX(dependencies: effects.dependencies()).read(Fixture.target), Fixture.fullText)
+    }
+
+    func testReaderCarriesScreenCommentsIntoResult() throws {
+        let reader = NoticeReader(fetch: { _ in self.notice(Fixture.shortText) }, screenWithComments: { _ in
+            NoticeScreen(text: Fixture.fullText, comments: [Fixture.firstComment])
+        })
+        let result = try reader.read(chatId: Fixture.chatId)
+        XCTAssertEqual(result.comments, [Fixture.firstComment])
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(KktOutput.line(result).utf8)) as? [String: Any])
+        XCTAssertEqual(object["comments"] as? [String], [Fixture.firstComment])
+        XCTAssertTrue(result.humanReadable.contains(Fixture.firstComment))
+    }
+
+    func testFallbackResultsHaveNoComments() throws {
+        let reader = NoticeReader(fetch: { _ in self.notice(Fixture.shortText) }, screenWithComments: { _ in nil })
+        let result = try reader.read(chatId: Fixture.chatId)
+        XCTAssertEqual(result.comments, [])
+        XCTAssertEqual(result.source, "truncated")
+    }
+
     private func notice(_ text: String, deleted: Bool = false) -> NoticeResult {
         NoticeResult(chatId: Fixture.chatId, text: text, source: "database", truncated: false,
                      updatedAt: Fixture.updatedAt, messageDeleted: deleted)
@@ -368,12 +415,54 @@ final class NoticeTests: XCTestCase {
         let register = AXUIElementCreateApplication(-12)
         // 26.9 has an action-less button between the notice icon and its text (measured 2026-11-03).
         let spacer = AXUIElementCreateApplication(-13)
+        let likeRow = AXUIElementCreateApplication(-14)
+        let likeCell = AXUIElementCreateApplication(-15)
+        let likeText = AXUIElementCreateApplication(-16)
+        let scrollBar = AXUIElementCreateApplication(-17)
         var events: [String] = []
         var clicks: [CGPoint] = []
         var now = Date(timeIntervalSince1970: TimeInterval(Fixture.updatedAt))
+        var commentRows: [String] = []
+        var scrolledCommentRows: [String]?
+        var hasScrollBar = false
+        var scrollValues: [Double] = []
+        private var commentElements: [String: (row: AXUIElement, cell: AXUIElement, text: AXUIElement)] = [:]
+        private var nextPid: pid_t = -100
+
+        private func comment(_ text: String) -> (row: AXUIElement, cell: AXUIElement, text: AXUIElement) {
+            if let existing = commentElements[text] { return existing }
+            let created = (AXUIElementCreateApplication(nextPid), AXUIElementCreateApplication(nextPid - 1),
+                           AXUIElementCreateApplication(nextPid - 2))
+            nextPid -= 3
+            commentElements[text] = created
+            return created
+        }
+
+        private func commentText(of element: AXUIElement) -> String? {
+            commentElements.first { CFEqual($0.value.text, element) }?.key
+        }
+
+        private func isComment(_ element: AXUIElement, _ part: KeyPath<(row: AXUIElement, cell: AXUIElement, text: AXUIElement), AXUIElement>) -> Bool {
+            commentElements.values.contains { CFEqual($0[keyPath: part], element) }
+        }
+
+        private func rows() -> [AXUIElement] {
+            let scrolled = (scrollValues.last ?? .zero) > .zero
+            let texts = scrolled ? (scrolledCommentRows ?? commentRows) : commentRows
+            let base = scrolled ? [likeRow] : [row, likeRow]
+            return base + texts.map { comment($0).row }
+        }
 
         func dependencies() -> NoticeAX.Dependencies {
+            commentRows.forEach { _ = comment($0) }
+            scrolledCommentRows?.forEach { _ = comment($0) }
             var dependencies = NoticeAX.Dependencies()
+            dependencies.scrollBar = { _ in self.hasScrollBar ? self.scrollBar : nil }
+            dependencies.setScrollValue = { element, value in
+                XCTAssertTrue(CFEqual(element, self.scrollBar))
+                self.scrollValues.append(value)
+                return true
+            }
             dependencies.open = { target in
                 XCTAssertEqual(target, Fixture.target)
                 self.events.append("open")
@@ -390,9 +479,17 @@ final class NoticeTests: XCTestCase {
                 if CFEqual(element, self.table) { XCTFail("Use visible rows"); return [] }
                 if CFEqual(element, self.row) { return [self.cell] }
                 if CFEqual(element, self.cell) { return [self.marker, self.body, self.comment] }
+                if CFEqual(element, self.likeRow) { return [self.likeCell] }
+                if CFEqual(element, self.likeCell) { return [self.likeText] }
+                if let parts = self.commentElements.values.first(where: { CFEqual($0.row, element) }) { return [parts.cell] }
+                if let parts = self.commentElements.values.first(where: { CFEqual($0.cell, element) }) { return [parts.text] }
                 return []
             }
             dependencies.role = { element in
+                if CFEqual(element, self.likeRow) || self.isComment(element, \.row) { return "AXRow" }
+                if CFEqual(element, self.likeCell) || self.isComment(element, \.cell) { return "AXCell" }
+                if CFEqual(element, self.likeText) { return "AXStaticText" }
+                if self.isComment(element, \.text) { return "AXTextArea" }
                 if CFEqual(element, self.icon) { return "AXImage" }
                 if CFEqual(element, self.banner) || CFEqual(element, self.marker) { return "AXStaticText" }
                 if CFEqual(element, self.body) || CFEqual(element, self.comment) { return "AXTextArea" }
@@ -415,7 +512,8 @@ final class NoticeTests: XCTestCase {
                 if CFEqual(element, self.body) { return Fixture.fullText }
                 if CFEqual(element, self.marker) { return "23시간 전 ・ 공지" }
                 if CFEqual(element, self.comment) { XCTFail("Do not read comment input") }
-                return nil
+                if CFEqual(element, self.likeText) { return "가장 먼저 좋아요를 남겨보세요." }
+                return self.commentText(of: element)
             }
             dependencies.position = { element in
                 XCTAssertTrue(CFEqual(element, self.banner))
@@ -424,7 +522,7 @@ final class NoticeTests: XCTestCase {
             dependencies.size = { _ in CGSize(width: 200, height: 30) }
             dependencies.visibleRows = { element in
                 XCTAssertTrue(CFEqual(element, self.table))
-                return [self.row]
+                return self.commentRows.isEmpty && self.scrolledCommentRows == nil ? [self.row] : self.rows()
             }
             dependencies.captureFocus = { restoresCursor in
                 XCTAssertTrue(restoresCursor)

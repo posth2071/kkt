@@ -1,6 +1,17 @@
 import AppKit
 import ApplicationServices
 
+/// Notice body plus the comments listed under it in the notice board, top to bottom.
+public struct NoticeScreen: Equatable {
+    public let text: String
+    public let comments: [String]
+
+    public init(text: String, comments: [String]) {
+        self.text = text
+        self.comments = comments
+    }
+}
+
 public struct NoticeAX {
     struct Dependencies {
         var open: (SendTarget) throws -> AXUIElement = { try ChatOpener().open($0) }
@@ -17,6 +28,8 @@ public struct NoticeAX {
         var visibleRows: (AXUIElement) -> [AXUIElement]? = {
             AXHelpers.elements($0, attribute: kAXVisibleRowsAttribute as String)
         }
+        var scrollBar: (AXUIElement) -> AXUIElement? = AXHelpers.chatListScrollBar
+        var setScrollValue: (AXUIElement, Double) -> Bool = AXHelpers.setScrollValue
         var captureFocus: (Bool) -> (() -> Void) = {
             let guard_ = FocusGuard(restoresCursor: $0)
             return { guard_.restore() }
@@ -38,6 +51,10 @@ public struct NoticeAX {
     init(dependencies: Dependencies) { self.dependencies = dependencies }
 
     public func read(_ target: SendTarget) throws -> String? {
+        try readScreen(target)?.text
+    }
+
+    public func readScreen(_ target: SendTarget) throws -> NoticeScreen? {
         let room = try dependencies.open(target)
         var board: AXUIElement?
         var restore: (() -> Void)?
@@ -72,7 +89,7 @@ public struct NoticeAX {
                         && !previousWindows.contains { CFEqual($0, window) }
                 }
             }
-            if let board, let text = text(in: board) { return text }
+            if let board, let screen = screen(in: board) { return screen }
             let remaining = deadline.timeIntervalSince(dependencies.clock())
             guard remaining > KktConstants.zeroInterval else { return nil }
             dependencies.sleep(min(KktConstants.windowPoll, remaining))
@@ -92,26 +109,49 @@ public struct NoticeAX {
         return children.lazy.compactMap { banner(in: $0, depth: depth - KktConstants.one) }.first
     }
 
-    private func text(in window: AXUIElement) -> String? {
+    private func screen(in window: AXUIElement) -> NoticeScreen? {
         guard let table = descendants(window, depth: KktConstants.AX.searchDepth).first(where: {
             dependencies.role($0) == KktConstants.AX.table
                 && dependencies.identifier($0) == KktConstants.NoticeAX.table
         }) else { return nil }
+        var body: String?
+        var comments: [String] = []
+        collect(table: table, body: &body, comments: &comments)
+        guard let text = body else { return nil }
+        // Comments past the fold are not in the visible rows, so page down once per step and merge in order.
+        if let bar = dependencies.scrollBar(table) {
+            for step in KktConstants.one...KktConstants.NoticeAX.commentScrollSteps {
+                let value = Double(step) / Double(KktConstants.NoticeAX.commentScrollSteps)
+                guard dependencies.setScrollValue(bar, value) else { break }
+                dependencies.sleep(KktConstants.chatListScrollSettle)
+                collect(table: table, body: &body, comments: &comments)
+            }
+            _ = dependencies.setScrollValue(bar, Double(KktConstants.zero))
+        }
+        return NoticeScreen(text: text, comments: comments)
+    }
+
+    private func collect(table: AXUIElement, body: inout String?, comments: inout [String]) {
         let rows = dependencies.visibleRows(table) ?? dependencies.children(table)
         for row in rows where dependencies.role(row) == KktConstants.AX.row {
             for cell in dependencies.children(row) where dependencies.role(cell) == KktConstants.AX.cell {
                 let contents = descendants(cell, depth: KktConstants.AX.searchDepth)
-                guard contents.contains(where: {
+                let isNotice = contents.contains(where: {
                     dependencies.role($0) == KktConstants.AX.staticText
                         && dependencies.identifier($0) == KktConstants.NoticeAX.marker
                         && dependencies.value($0)?.contains(KktConstants.NoticeAX.noticeMarker) == true
-                }), let body = contents.first(where: {
+                })
+                // The comment input has an identifier; posted notice and comment bodies do not.
+                guard let area = contents.first(where: {
                     dependencies.role($0) == KktConstants.NoticeAX.textArea && hasNoIdentifier($0)
-                }), let text = dependencies.value(body), !text.isEmpty else { continue }
-                return text
+                }), let text = dependencies.value(area), !text.isEmpty else { continue }
+                if isNotice {
+                    if body == nil { body = text }
+                } else if body != nil, !comments.contains(text) {
+                    comments.append(text)
+                }
             }
         }
-        return nil
     }
 
     private func descendants(_ element: AXUIElement, depth: Int) -> [AXUIElement] {
@@ -147,5 +187,6 @@ extension KktConstants {
         static let iconPrefix = "chatroom icon noti"
         static let clickInset: CGFloat = 40
         static let timeout: TimeInterval = 3
+        static let commentScrollSteps = 4
     }
 }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `notice`가 공지 아래 댓글도 읽어 `comments`(위에서부터 순서대로)로 반환. 댓글이 화면 아래에 있으면 공지 창을 내려 가며 모으고 끝나면 맨 위로 되돌림. 댓글이 없거나 DB 본문으로 돌아갈 때는 `comments` 키를 내보내지 않아 기존 JSON 계약 유지. 텍스트 출력에는 `[댓글]` 아래 한 줄씩 덧붙임. `NoticeAX.readScreen`·`NoticeScreen`·`NoticeReader(fetch:screenWithComments:)` 추가.
 - `notice`가 490자 미만 공지도 화면에서 읽도록 수정. 공지를 수정해도 DB 행이 갱신되지 않아 예전 내용이 나오던 문제 해결. 이제 호출마다 방을 열고 카카오톡이 잠깐 앞으로 오며, 화면을 읽지 못하면 DB 본문을 `source: "truncated"`, `truncated: true`로 반환. `NoticeReader.read`는 `source: "database"`를 반환하지 않음.
 - 안드로이드 에뮬레이터처럼 번들 ID가 없는 앱이 앞에 있을 때 작업 뒤 포커스가 카카오톡에 남던 문제 수정. `FocusGuard`가 프로세스로 복원하고, 공개 생성자에 선택 인자 `captureProcess`·`activate` 추가.
 

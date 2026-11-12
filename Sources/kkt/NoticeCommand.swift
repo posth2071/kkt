@@ -39,7 +39,7 @@ struct NoticeCommand: ParsableCommand {
             }
             let reader = NoticeReader(fetch: { chatId in
                 try ReadQueries.retry { try NoticeReader.databaseNotice(database: database, chatId: chatId) }
-            }, screen: { chatId in
+            }, screenWithComments: { chatId in
                 try ProgressIndicator.forTerminal(json: json).during(.readingNotice) {
                     let lock = KktLock(path: config.lockPath)
                     try lock.acquire(timeout: KktConstants.lockDefaultTimeout)
@@ -47,7 +47,7 @@ struct NoticeCommand: ParsableCommand {
                     let target = try ReadQueries.retry {
                         try NoticeReader.screenTarget(database: database, chatId: chatId)
                     }
-                    return try MainWindowKeeper().preserving { try NoticeAX().read(target) }
+                    return try MainWindowKeeper().preserving { try NoticeAX().readScreen(target) }
                 }
             })
             let result = try reader.read(chatId: id)

@@ -16,7 +16,7 @@
 kkt chats --limit 5                                   # 최근 채팅방
 kkt messages --chat "모집방" --since 7d               # 최근 일주일 메시지
 kkt search "점심" --since 12h                         # 본문 검색
-kkt notice --chat "미션방" --json                     # 방 공지 전문
+kkt notice --chat "미션방" --json                     # 방 공지 전문과 공지 댓글
 kkt send --chat-id 18000000000000001 --text "확인" --image ~/Pictures/photo.png
 kkt serve --interval 1                                # 새 메시지 실시간 스트림
 ```
@@ -41,7 +41,7 @@ kkt serve --interval 1                                # 새 메시지 실시간 
 | 방의 메시지 읽기 | `kkt messages` |
 | 본문 검색 | `kkt search` |
 | DB를 SQL로 조회 (읽기 전용) | `kkt query` |
-| 방 공지 전문 읽기 | `kkt notice` |
+| 방 공지 전문·공지 댓글 읽기 | `kkt notice` |
 | 글·사진 보내기 | `kkt send` |
 | 새 메시지 실시간 받기 | `kkt serve` |
 | 오픈채팅 참여 | `kkt join` |
